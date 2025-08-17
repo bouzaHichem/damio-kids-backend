@@ -86,7 +86,7 @@ const connectDB = async () => {
       useUnifiedTopology: true,
     });
     
-    console.log(MongoDB Connected: );
+    console.log("MongoDB Connected:");
   } catch (error) {
     console.error('MongoDB connection error:', error.message);
     process.exit(1);
@@ -278,7 +278,7 @@ app.post('/login', async (req, res) => {
       { expiresIn: '24h' } // Add token expiration
     );
     
-    console.log(User logged in:  ());
+    console.log("User logged in:", user.email);
     
     res.json({ 
       success: true, 
@@ -333,7 +333,7 @@ app.post('/signup', async (req, res) => {
       { expiresIn: '24h' }
     );
     
-    console.log(User registered: );
+    console.log("User registered:", user.email);
     
     res.json({ 
       success: true, 
@@ -450,8 +450,9 @@ app.use((err, req, res, next) => {
 
 // 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({ success: false, errors: Route  not found });
+  res.status(404).json({ success: false, errors: "Route not found" });
 });
+
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
