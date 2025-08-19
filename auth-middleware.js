@@ -68,7 +68,7 @@ const fetchuser = async (req, res, next) => {
       }
       
       req.user = data.user;
-      console.log(User authenticated:  with role: );
+      console.log(`User authenticated: ${data.user.id} with role: ${data.user.role || 'user'}`);
       next();
     } catch (error) {
       console.error('Token verification error:', error.message);

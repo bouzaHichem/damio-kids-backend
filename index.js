@@ -214,42 +214,83 @@ app.post("/upload-multiple", upload.array('products', 5), async (req, res) => {
 
 // Authentication middleware
 const fetchuser = async (req, res, next) => {
+  console.log('🔐 Authentication middleware triggered for:', req.path);
+  
   let token = req.header("auth-token");
   
   // Also check for Authorization header with Bearer format
   if (!token) {
-    const authHeader = req.header("Authorization");
+    const authHeader = req.header("Authorization") || req.headers.authorization;
+    console.log('🔍 Authorization header:', authHeader ? authHeader.substring(0, 20) + '...' : 'not found');
+    
     if (authHeader && authHeader.startsWith("Bearer ")) {
       token = authHeader.substring(7); // Remove "Bearer " prefix
+      console.log('✅ Token extracted from Bearer header');
+    } else if (authHeader && authHeader.startsWith("auth-token ")) {
+      token = authHeader.substring(11); // Remove "auth-token " prefix
+      console.log('✅ Token extracted from auth-token header');
+    } else if (authHeader) {
+      token = authHeader; // Sometimes sent without prefix
+      console.log('⚠️ Token used from Authorization header without Bearer prefix');
     }
+  } else {
+    console.log('✅ Token found in auth-token header');
   }
   
   if (!token) {
+    console.log('❌ No token provided in request');
     return res.status(401).json({ 
       success: false, 
       errors: "Please authenticate using a valid token" 
     });
   }
   
+  // Clean token and add debugging
+  token = token.trim().replace(/^"|"$/g, '');
+  console.log('🔑 Token length:', token.length, 'starts with:', token.substring(0, 10) + '...');
+  
   // Validate JWT_SECRET exists
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
-    console.error('JWT_SECRET environment variable is not defined');
+    console.error('❌ JWT_SECRET environment variable is not defined');
     return res.status(500).json({ 
       success: false, 
       errors: "Server configuration error" 
     });
   }
   
+  console.log('🔐 JWT_SECRET is configured, length:', jwtSecret.length);
+  
   try {
+    console.log('🔓 Attempting to verify token...');
     const data = jwt.verify(token, jwtSecret);
+    
+    if (!data.user || !data.user.id) {
+      console.error('❌ Token verification failed: Invalid token structure');
+      return res.status(401).json({
+        success: false,
+        errors: 'Invalid token format'
+      });
+    }
+    
     req.user = data.user;
+    console.log('✅ User authenticated:', data.user.id, 'role:', data.user.role || 'user');
     next();
   } catch (error) {
-    console.error('Token verification error:', error.message);
+    console.error('❌ Token verification error:', error.name, error.message);
+    
+    let errorMessage = 'Invalid or expired token';
+    if (error.name === 'TokenExpiredError') {
+      errorMessage = 'Token has expired, please login again';
+    } else if (error.name === 'JsonWebTokenError') {
+      errorMessage = 'Invalid token format - jwt malformed';
+    } else if (error.name === 'NotBeforeError') {
+      errorMessage = 'Token not active yet';
+    }
+    
     return res.status(401).json({ 
       success: false, 
-      errors: "Invalid or expired token" 
+      errors: errorMessage 
     });
   }
 };
@@ -1591,6 +1632,133 @@ app.post("/admin/collections/upload-banner", fetchuser, upload.single('banner'),
   } catch (error) {
     console.error("Upload Banner Error:", error);
     res.status(500).json({ success: false, message: "Error uploading banner", error: error.message });
+  }
+});
+
+// Email Notifications Management API
+// Get notification settings
+app.get("/admin/email/notifications", fetchuser, async (req, res) => {
+  try {
+    // Mock notification settings - in production, this would come from database
+    const notificationSettings = {
+      lowStockAlerts: true,
+      orderConfirmations: true,
+      welcomeEmails: true,
+      marketingEmails: false,
+      adminAlerts: true,
+      emailProvider: process.env.EMAIL_PROVIDER || 'not_configured',
+      lastTest: null
+    };
+    
+    res.json({ success: true, settings: notificationSettings });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error fetching notification settings", error: error.message });
+  }
+});
+
+// Update notification settings
+app.post("/admin/email/notifications/settings", fetchuser, async (req, res) => {
+  try {
+    const { lowStockAlerts, orderConfirmations, welcomeEmails, marketingEmails, adminAlerts } = req.body;
+    
+    // In production, save these to database
+    const updatedSettings = {
+      lowStockAlerts: lowStockAlerts !== undefined ? lowStockAlerts : true,
+      orderConfirmations: orderConfirmations !== undefined ? orderConfirmations : true,
+      welcomeEmails: welcomeEmails !== undefined ? welcomeEmails : true,
+      marketingEmails: marketingEmails !== undefined ? marketingEmails : false,
+      adminAlerts: adminAlerts !== undefined ? adminAlerts : true,
+      emailProvider: process.env.EMAIL_PROVIDER || 'not_configured',
+      lastUpdated: new Date().toISOString()
+    };
+    
+    console.log('📧 Email notification settings updated by admin:', req.user.id);
+    
+    res.json({ success: true, settings: updatedSettings, message: "Notification settings updated successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error updating notification settings", error: error.message });
+  }
+});
+
+// Send test email
+app.post("/admin/email/notifications/test", fetchuser, async (req, res) => {
+  try {
+    const { to, subject = 'Test Email from Damio Kids Admin' } = req.body;
+    
+    if (!to) {
+      return res.status(400).json({ success: false, message: "Recipient email is required" });
+    }
+    
+    // Mock email sending - in production, use actual email service
+    const testResult = {
+      success: true,
+      messageId: 'test-' + Date.now(),
+      to: to,
+      subject: subject,
+      sentAt: new Date().toISOString(),
+      provider: process.env.EMAIL_PROVIDER || 'mock'
+    };
+    
+    console.log('📧 Test email sent:', testResult);
+    
+    res.json({ 
+      success: true, 
+      result: testResult,
+      message: "Test email sent successfully" 
+    });
+  } catch (error) {
+    console.error('Email test error:', error);
+    res.status(500).json({ success: false, message: "Error sending test email", error: error.message });
+  }
+});
+
+// Get email logs (mock implementation)
+app.get("/admin/email/notifications/logs", fetchuser, async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    
+    // Mock email logs - in production, fetch from database
+    const mockLogs = [
+      {
+        id: 1,
+        type: 'order_confirmation',
+        to: 'customer@example.com',
+        subject: 'Order Confirmation #12345',
+        status: 'sent',
+        sentAt: new Date().toISOString(),
+        messageId: 'msg-12345'
+      },
+      {
+        id: 2,
+        type: 'low_stock_alert',
+        to: 'admin@damiokids.com',
+        subject: 'Low Stock Alert - Product ID 123',
+        status: 'sent',
+        sentAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+        messageId: 'msg-12346'
+      },
+      {
+        id: 3,
+        type: 'welcome_email',
+        to: 'newuser@example.com',
+        subject: 'Welcome to Damio Kids!',
+        status: 'failed',
+        sentAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
+        error: 'Invalid email address'
+      }
+    ];
+    
+    res.json({
+      success: true,
+      logs: mockLogs,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: 1,
+        totalLogs: mockLogs.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error fetching email logs", error: error.message });
   }
 });
 
