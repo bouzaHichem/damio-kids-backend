@@ -399,6 +399,10 @@ const Collection = mongoose.model("Collection", {
 });
 
 
+// Import admin routes
+const adminAuthRoutes = require('./routes/adminAuth');
+const { requireAdminAuth, requirePermission } = require('./middleware/adminAuth');
+
 // Routes
 app.get("/", (req, res) => res.send("Damio Kids API - Server is running!"));
 
@@ -406,6 +410,9 @@ app.get("/", (req, res) => res.send("Damio Kids API - Server is running!"));
 app.get("/health", (req, res) => {
   res.json({ status: "OK", message: "Damio Kids API is running", timestamp: new Date().toISOString() });
 });
+
+// Admin authentication routes
+app.use('/api/admin/auth', adminAuthRoutes);
 
 app.post('/login', async (req, res) => {
   try {
