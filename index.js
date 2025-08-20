@@ -418,6 +418,72 @@ app.use('/api/admin/auth', adminAuthRoutes);
 // Admin settings routes
 app.use('/api/admin/settings', adminSettingsRoutes);
 
+// Temporary admin seeding endpoint (remove after use)
+app.post('/seed-admin', async (req, res) => {
+  try {
+    console.log('🌱 Creating admin user via API endpoint...');
+    
+    const Admin = require('./models/Admin');
+    
+    // Check if admin already exists
+    const existingAdmin = await Admin.findOne({ email: 'admin@damiokids.com' });
+    
+    if (existingAdmin) {
+      console.log('⚠️ Admin user already exists');
+      return res.status(200).json({
+        success: true,
+        message: 'Admin user already exists',
+        admin: {
+          email: existingAdmin.email,
+          role: existingAdmin.role,
+          isActive: existingAdmin.isActive
+        }
+      });
+    }
+    
+    // Create new admin
+    const adminData = {
+      email: 'admin@damiokids.com',
+      password: 'AdminPassword123!', // Will be hashed automatically
+      firstName: 'Admin',
+      lastName: 'User',
+      profileIcon: null,
+      role: 'super_admin',
+      isActive: true
+    };
+    
+    const newAdmin = new Admin(adminData);
+    const savedAdmin = await newAdmin.save();
+    
+    console.log('✅ Admin user created successfully via API!');
+    
+    res.status(201).json({
+      success: true,
+      message: 'Admin user created successfully',
+      admin: {
+        id: savedAdmin._id,
+        email: savedAdmin.email,
+        firstName: savedAdmin.firstName,
+        lastName: savedAdmin.lastName,
+        role: savedAdmin.role,
+        isActive: savedAdmin.isActive
+      },
+      credentials: {
+        email: 'admin@damiokids.com',
+        password: 'AdminPassword123!'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating admin user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create admin user',
+      error: error.message
+    });
+  }
+});
+
 app.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
