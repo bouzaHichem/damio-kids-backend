@@ -33,6 +33,20 @@ const adminSchema = new mongoose.Schema({
     trim: true,
     maxlength: [50, 'Last name cannot exceed 50 characters']
   },
+  profileIcon: {
+    type: String,
+    default: null,
+    trim: true,
+    validate: {
+      validator: function(url) {
+        if (!url) return true; // Allow null/empty
+        // Validate URL format or Cloudinary URL pattern
+        return /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)$/i.test(url) || 
+               /^https:\/\/res\.cloudinary\.com\/.+/.test(url);
+      },
+      message: 'Profile icon must be a valid image URL'
+    }
+  },
   role: {
     type: String,
     enum: ['admin', 'super_admin', 'moderator'],

@@ -8,6 +8,7 @@ const adminSeedData = {
   password: 'AdminPassword123!', // Will be hashed automatically
   firstName: 'Admin',
   lastName: 'User',
+  profileIcon: null, // No initial profile icon
   role: 'super_admin',
   isActive: true
 };

@@ -401,6 +401,7 @@ const Collection = mongoose.model("Collection", {
 
 // Import admin routes
 const adminAuthRoutes = require('./routes/adminAuth');
+const adminSettingsRoutes = require('./routes/admin/settings');
 const { requireAdminAuth, requirePermission } = require('./middleware/adminAuth');
 
 // Routes
@@ -413,6 +414,9 @@ app.get("/health", (req, res) => {
 
 // Admin authentication routes
 app.use('/api/admin/auth', adminAuthRoutes);
+
+// Admin settings routes
+app.use('/api/admin/settings', adminSettingsRoutes);
 
 app.post('/login', async (req, res) => {
   try {
