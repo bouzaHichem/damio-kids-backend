@@ -399,10 +399,36 @@ const Collection = mongoose.model("Collection", {
 });
 
 
-// Import admin routes
-const adminAuthRoutes = require('./routes/adminAuth');
-const adminSettingsRoutes = require('./routes/admin/settings');
-const { requireAdminAuth, requirePermission } = require('./middleware/adminAuth');
+// Import admin routes with error handling
+let adminAuthRoutes;
+let adminSettingsRoutes;
+let requireAdminAuth;
+let requirePermission;
+
+try {
+  adminAuthRoutes = require('./routes/adminAuth');
+  adminSettingsRoutes = require('./routes/admin/settings');
+  const adminMiddleware = require('./middleware/adminAuth');
+  requireAdminAuth = adminMiddleware.requireAdminAuth;
+  requirePermission = adminMiddleware.requirePermission;
+  console.log('✅ Admin routes loaded successfully');
+} catch (error) {
+  console.error('❌ Error loading admin routes:', error.message);
+  console.error('Stack:', error.stack);
+  
+  // Create fallback routes to prevent server crash
+  adminAuthRoutes = require('express').Router();
+  adminSettingsRoutes = require('express').Router();
+  
+  // Add error endpoints
+  adminAuthRoutes.all('*', (req, res) => {
+    res.status(500).json({ success: false, message: 'Admin authentication routes not available' });
+  });
+  
+  adminSettingsRoutes.all('*', (req, res) => {
+    res.status(500).json({ success: false, message: 'Admin settings routes not available' });
+  });
+}
 
 // Routes
 app.get("/", (req, res) => res.send("Damio Kids API - Server is running!"));
