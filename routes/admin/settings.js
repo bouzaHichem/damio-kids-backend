@@ -26,7 +26,7 @@ const storage = new CloudinaryStorage({
     ],
     public_id: (req, file) => {
       // Generate unique filename with admin ID
-      return `admin_${req.user.id}_${Date.now()}`;
+      return `admin_${req.adminId}_${Date.now()}`;
     }
   },
 });
@@ -49,7 +49,7 @@ const upload = multer({
 // GET /api/admin/settings - Get current admin profile
 router.get('/', requireAdminAuth, async (req, res) => {
   try {
-    const admin = await Admin.findById(req.user.id).select('-password -loginAttempts -lockUntil');
+    const admin = await Admin.findById(req.adminId).select('-password -loginAttempts -lockUntil');
     
     if (!admin) {
       return res.status(404).json({
@@ -85,7 +85,7 @@ router.put('/', requireAdminAuth, async (req, res) => {
     } = req.body;
 
     // Find admin with password field for verification
-    const admin = await Admin.findById(req.user.id).select('+password');
+    const admin = await Admin.findById(req.adminId).select('+password');
     
     if (!admin) {
       return res.status(404).json({
@@ -237,7 +237,7 @@ router.post('/upload-avatar', requireAdminAuth, upload.single('profileIcon'), as
     const profileIconUrl = req.file.path;
 
     // Update admin's profile icon
-    const admin = await Admin.findById(req.user.id);
+    const admin = await Admin.findById(req.adminId);
     if (!admin) {
       return res.status(404).json({
         success: false,
@@ -291,7 +291,7 @@ router.post('/upload-avatar', requireAdminAuth, upload.single('profileIcon'), as
 // DELETE /api/admin/settings/avatar - Remove profile icon
 router.delete('/avatar', requireAdminAuth, async (req, res) => {
   try {
-    const admin = await Admin.findById(req.user.id);
+    const admin = await Admin.findById(req.adminId);
     
     if (!admin) {
       return res.status(404).json({

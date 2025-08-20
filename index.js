@@ -61,32 +61,62 @@ app.use('/upload-multiple', uploadLimiter);
 // CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) in development
+    console.log('🌐 CORS check for origin:', origin);
+    
+    // Allow requests with no origin (like mobile apps, curl, Postman) in development
     if (!origin && process.env.NODE_ENV !== 'production') {
+      console.log('✅ CORS: Allowing request with no origin (development)');
       return callback(null, true);
     }
     
     const allowedOrigins = [
-      'http://localhost:3000', // Local frontend development
-      'http://localhost:3001', // Local admin development
-      process.env.FRONTEND_URL, // Production frontend URL
-      process.env.ADMIN_URL,    // Production admin URL
+      'http://localhost:3000',    // Local frontend development
+      'http://localhost:3001',    // Local admin development
+      'http://127.0.0.1:3000',    // Alternative localhost
+      'http://127.0.0.1:3001',    // Alternative localhost
+      process.env.FRONTEND_URL,   // Production frontend URL
+      process.env.ADMIN_URL,      // Production admin URL
     ].filter(Boolean); // Remove undefined values
     
-    // Add specific Vercel URLs if environment variables not set (fallback)
-    if (!process.env.FRONTEND_URL || !process.env.ADMIN_URL) {
-      allowedOrigins.push(
-        'https://damio-kids-final-project-hnvnrxzrl-hichems-projects-d5b6dfcd.vercel.app',
-        'https://damio-kids-final-project-bhz7a3q9u-hichems-projects-d5b6dfcd.vercel.app',
-        'https://damio-kids-final-project-yor62j7zs-hichems-projects-d5b6dfcd.vercel.app',
-        'https://damio-kids-final-project-by98m3xod-hichems-projects-d5b6dfcd.vercel.app'
+    // Add common Vercel URLs (both for main and admin)
+    const vercelUrls = [
+      'https://damio-kids-final-project-hnvnrxzrl-hichems-projects-d5b6dfcd.vercel.app',
+      'https://damio-kids-final-project-bhz7a3q9u-hichems-projects-d5b6dfcd.vercel.app',
+      'https://damio-kids-final-project-yor62j7zs-hichems-projects-d5b6dfcd.vercel.app',
+      'https://damio-kids-final-project-by98m3xod-hichems-projects-d5b6dfcd.vercel.app',
+      'https://damio-kids-final-project.vercel.app',
+      'https://damio-kids-admin.vercel.app',
+    ];
+    
+    allowedOrigins.push(...vercelUrls);
+    
+    // In development, be more permissive with Vercel preview URLs
+    if (process.env.NODE_ENV !== 'production') {
+      const isVercelPreview = origin && (
+        origin.includes('vercel.app') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1')
       );
+      
+      if (isVercelPreview) {
+        console.log('✅ CORS: Allowing Vercel/localhost origin (development):', origin);
+        return callback(null, true);
+      }
     }
     
+    console.log('🔍 CORS: Checking origin against allowed list:', allowedOrigins);
+    
     if (allowedOrigins.includes(origin)) {
+      console.log('✅ CORS: Origin allowed:', origin);
       callback(null, true);
     } else {
-      console.warn(`CORS blocked request from origin: ${origin}`);
+      console.warn('❌ CORS: Blocked request from origin:', origin);
+      console.warn('Allowed origins:', allowedOrigins);
+      // In development, log but don't block
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('⚠️ CORS: Allowing blocked origin due to development mode');
+        return callback(null, true);
+      }
       callback(new Error('Not allowed by CORS policy'));
     }
   },
@@ -97,7 +127,8 @@ const corsOptions = {
     'auth-token',
     'X-Requested-With',
     'Accept',
-    'Origin'
+    'Origin',
+    'Cookie'
   ],
   credentials: true,
   optionsSuccessStatus: 200 // For legacy browser support
@@ -401,18 +432,43 @@ const Collection = mongoose.model("Collection", {
 });
 
 
-// Import admin routes with error handling
+// Import admin routes with comprehensive error handling
 let adminAuthRoutes = require('express').Router();
 let adminSettingsRoutes = require('express').Router();
 let requireAdminAuth;
 let requirePermission;
 
+// Create fallback middleware functions
+const createFallbackAuth = (errorMsg) => (req, res, next) => {
+  console.error('Admin auth fallback triggered:', errorMsg);
+  return res.status(401).json({ 
+    success: false, 
+    message: 'Admin authentication unavailable', 
+    error: errorMsg 
+  });
+};
+
+const createFallbackPermission = (errorMsg) => () => (req, res, next) => {
+  console.error('Admin permission fallback triggered:', errorMsg);
+  return res.status(403).json({ 
+    success: false, 
+    message: 'Admin permissions unavailable', 
+    error: errorMsg 
+  });
+};
+
 try {
   // Load admin middleware first
-  const adminMiddleware = require('./middleware/adminAuth');
-  requireAdminAuth = adminMiddleware.requireAdminAuth;
-  requirePermission = adminMiddleware.requirePermission;
-  console.log('✅ Admin middleware loaded successfully');
+  try {
+    const adminMiddleware = require('./middleware/adminAuth');
+    requireAdminAuth = adminMiddleware.requireAdminAuth;
+    requirePermission = adminMiddleware.requirePermission;
+    console.log('✅ Admin middleware loaded successfully');
+  } catch (middlewareError) {
+    console.error('❌ Error loading admin middleware:', middlewareError.message);
+    requireAdminAuth = createFallbackAuth('Middleware not available');
+    requirePermission = createFallbackPermission('Middleware not available');
+  }
   
   // Load admin auth routes
   try {
@@ -422,7 +478,13 @@ try {
     console.error('❌ Error loading admin auth routes:', authError.message);
     adminAuthRoutes = require('express').Router();
     adminAuthRoutes.all('*', (req, res) => {
-      res.status(500).json({ success: false, message: 'Admin auth routes not available', error: authError.message });
+      console.error('Admin auth route fallback for:', req.path);
+      res.status(404).json({ 
+        success: false, 
+        message: 'Admin auth route not available', 
+        path: req.path,
+        error: authError.message 
+      });
     });
   }
   
@@ -434,30 +496,39 @@ try {
     console.error('❌ Error loading admin settings routes:', settingsError.message);
     adminSettingsRoutes = require('express').Router();
     adminSettingsRoutes.all('*', (req, res) => {
-      res.status(500).json({ success: false, message: 'Admin settings routes not available', error: settingsError.message });
+      console.error('Admin settings route fallback for:', req.path);
+      res.status(404).json({ 
+        success: false, 
+        message: 'Admin settings route not available', 
+        path: req.path,
+        error: settingsError.message 
+      });
     });
   }
   
 } catch (error) {
-  console.error('❌ Critical error loading admin components:', error.message);
+  console.error('❌ Critical error in admin routes setup:', error.message);
   console.error('Stack:', error.stack);
   
-  // Create minimal fallback middleware
-  requireAdminAuth = (req, res, next) => {
-    res.status(500).json({ success: false, message: 'Admin authentication not available', error: error.message });
-  };
+  // Ensure fallback functions exist
+  requireAdminAuth = requireAdminAuth || createFallbackAuth('Critical error');
+  requirePermission = requirePermission || createFallbackPermission('Critical error');
   
-  requirePermission = () => (req, res, next) => {
-    res.status(500).json({ success: false, message: 'Admin permissions not available', error: error.message });
-  };
-  
-  // Create fallback routes
+  // Ensure fallback routes exist
   adminAuthRoutes.all('*', (req, res) => {
-    res.status(500).json({ success: false, message: 'Admin routes not available', error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Admin system unavailable', 
+      error: error.message 
+    });
   });
   
   adminSettingsRoutes.all('*', (req, res) => {
-    res.status(500).json({ success: false, message: 'Admin settings not available', error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Admin settings unavailable', 
+      error: error.message 
+    });
   });
 }
 
