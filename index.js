@@ -402,33 +402,62 @@ const Collection = mongoose.model("Collection", {
 
 
 // Import admin routes with error handling
-let adminAuthRoutes;
-let adminSettingsRoutes;
+let adminAuthRoutes = require('express').Router();
+let adminSettingsRoutes = require('express').Router();
 let requireAdminAuth;
 let requirePermission;
 
 try {
-  adminAuthRoutes = require('./routes/adminAuth');
-  adminSettingsRoutes = require('./routes/admin/settings');
+  // Load admin middleware first
   const adminMiddleware = require('./middleware/adminAuth');
   requireAdminAuth = adminMiddleware.requireAdminAuth;
   requirePermission = adminMiddleware.requirePermission;
-  console.log('✅ Admin routes loaded successfully');
+  console.log('✅ Admin middleware loaded successfully');
+  
+  // Load admin auth routes
+  try {
+    adminAuthRoutes = require('./routes/adminAuth');
+    console.log('✅ Admin auth routes loaded successfully');
+  } catch (authError) {
+    console.error('❌ Error loading admin auth routes:', authError.message);
+    adminAuthRoutes = require('express').Router();
+    adminAuthRoutes.all('*', (req, res) => {
+      res.status(500).json({ success: false, message: 'Admin auth routes not available', error: authError.message });
+    });
+  }
+  
+  // Load admin settings routes
+  try {
+    adminSettingsRoutes = require('./routes/admin/settings');
+    console.log('✅ Admin settings routes loaded successfully');
+  } catch (settingsError) {
+    console.error('❌ Error loading admin settings routes:', settingsError.message);
+    adminSettingsRoutes = require('express').Router();
+    adminSettingsRoutes.all('*', (req, res) => {
+      res.status(500).json({ success: false, message: 'Admin settings routes not available', error: settingsError.message });
+    });
+  }
+  
 } catch (error) {
-  console.error('❌ Error loading admin routes:', error.message);
+  console.error('❌ Critical error loading admin components:', error.message);
   console.error('Stack:', error.stack);
   
-  // Create fallback routes to prevent server crash
-  adminAuthRoutes = require('express').Router();
-  adminSettingsRoutes = require('express').Router();
+  // Create minimal fallback middleware
+  requireAdminAuth = (req, res, next) => {
+    res.status(500).json({ success: false, message: 'Admin authentication not available', error: error.message });
+  };
   
-  // Add error endpoints
+  requirePermission = () => (req, res, next) => {
+    res.status(500).json({ success: false, message: 'Admin permissions not available', error: error.message });
+  };
+  
+  // Create fallback routes
   adminAuthRoutes.all('*', (req, res) => {
-    res.status(500).json({ success: false, message: 'Admin authentication routes not available' });
+    res.status(500).json({ success: false, message: 'Admin routes not available', error: error.message });
   });
   
   adminSettingsRoutes.all('*', (req, res) => {
-    res.status(500).json({ success: false, message: 'Admin settings routes not available' });
+    res.status(500).json({ success: false, message: 'Admin settings not available', error: error.message });
   });
 }
 
