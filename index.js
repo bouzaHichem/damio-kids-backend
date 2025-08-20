@@ -8,6 +8,7 @@ const path = require("path");
 const cors = require("cors");
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const port = process.env.PORT || 4000;
@@ -103,6 +104,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(cookieParser()); // Parse cookies for admin authentication
 
 // MongoDB Connection
 const connectDB = async () => {
