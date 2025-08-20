@@ -86,6 +86,8 @@ const corsOptions = {
       'https://damio-kids-final-project-by98m3xod-hichems-projects-d5b6dfcd.vercel.app',
       'https://damio-kids-final-project.vercel.app',
       'https://damio-kids-admin.vercel.app',
+      'https://damio-kids-admin-vercel.app', // Additional admin domain
+      'https://admin.damiokids.com', // Production admin domain
     ];
     
     allowedOrigins.push(...vercelUrls);
@@ -1437,7 +1439,7 @@ app.post("/admin/shop-images/upload", fetchuser, upload.single('shopImage'), asy
 });
 
 // Get all shop images
-app.get("/admin/shop-images", fetchuser, async (req, res) => {
+app.get("/admin/shop-images", requireAdminAuth, async (req, res) => {
   try {
     const images = await ShopImage.find({}).sort({ imageType: 1, order: 1 });
     res.json({ success: true, images });
@@ -1608,7 +1610,7 @@ app.get("/collections", async (req, res) => {
 });
 
 // Get all collections (admin endpoint)
-app.get("/admin/collections", fetchuser, async (req, res) => {
+app.get("/admin/collections", requireAdminAuth, async (req, res) => {
   try {
     const collections = await Collection.find({})
       .populate('products')
@@ -1842,7 +1844,7 @@ app.post("/admin/collections/upload-banner", fetchuser, upload.single('banner'),
 
 // Email Notifications Management API
 // Get notification settings
-app.get("/admin/email/notifications", fetchuser, async (req, res) => {
+app.get("/admin/email/notifications", requireAdminAuth, async (req, res) => {
   try {
     // Mock notification settings - in production, this would come from database
     const notificationSettings = {
