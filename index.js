@@ -147,19 +147,36 @@ const connectDB = async () => {
     if (!mongoURI) {
       console.error('MONGODB_URI environment variable is not defined');
       if (process.env.NODE_ENV === 'production') {
-        throw new Error('MONGODB_URI is required in production');
+        console.error('❌ MONGODB_URI is required in production');
+        console.error('Please set MONGODB_URI in your Render environment variables');
+        console.error('Example: mongodb+srv://username:password@cluster.mongodb.net/damio-kids');
+        
+        // In production, continue without database for debugging
+        console.warn('⚠️ Running without database connection for debugging...');
+        return;
       }
       console.warn('Using default local MongoDB connection');
     }
     
-    await mongoose.connect(mongoURI || "mongodb://localhost:27017/damio-kids", {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    
-    console.log(`MongoDB Connected: ${mongoose.connection.host}`);
+    if (mongoURI) {
+      await mongoose.connect(mongoURI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 5000,
+      });
+      
+      console.log(`✅ MongoDB Connected: ${mongoose.connection.host}`);
+    }
   } catch (error) {
-    console.error('MongoDB connection error:', error.message);
+    console.error('❌ MongoDB connection error:', error.message);
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('⚠️ Running in production without database connection for debugging');
+      console.warn('This will cause issues with data operations. Please fix MONGODB_URI.');
+      return; // Don't exit in production, allow server to start for debugging
+    }
+    
     process.exit(1);
   }
 };
