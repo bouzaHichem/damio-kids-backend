@@ -3,7 +3,16 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const { requireAdminAuth } = require('../middleware/adminAuth');
 
-// Apply admin authentication to all routes
+// Test route without authentication to debug
+router.get('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Admin test route working',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Apply admin authentication to all other routes
 router.use(requireAdminAuth);
 
 // Simple data access helpers without model redefinition
