@@ -63,9 +63,9 @@ const corsOptions = {
   origin: function (origin, callback) {
     console.log('🌐 CORS check for origin:', origin);
     
-    // Allow requests with no origin (like mobile apps, curl, Postman) in development
-    if (!origin && process.env.NODE_ENV !== 'production') {
-      console.log('✅ CORS: Allowing request with no origin (development)');
+    // Allow requests with no origin (like mobile apps, curl, Postman, health checks)
+    if (!origin) {
+      console.log('✅ CORS: Allowing request with no origin (direct API call)');
       return callback(null, true);
     }
     
