@@ -575,7 +575,12 @@ app.get("/", (req, res) => res.send("Damio Kids API - Server is running!"));
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({ status: "OK", message: "Damio Kids API is running", timestamp: new Date().toISOString() });
+  res.json({ 
+    status: "OK", 
+    message: "Damio Kids API is running", 
+    version: "2.1.0-admin-fixed",
+    timestamp: new Date().toISOString() 
+  });
 });
 
 // Admin authentication routes
