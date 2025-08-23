@@ -139,6 +139,17 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(cookieParser()); // Parse cookies for admin authentication
 
+// Static file serving with CORS headers for images
+app.use('/images', (req, res, next) => {
+  // Add CORS headers for images
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.header('Cache-Control', 'public, max-age=31536000'); // 1 year cache
+  next();
+}, express.static(path.join(__dirname, 'uploads')));
+
 // MongoDB Connection
 const connectDB = async () => {
   try {
@@ -221,6 +232,10 @@ const upload = multer({
 // Single image upload (existing functionality)
 app.post("/upload", upload.single('product'), async (req, res) => {
   try {
+    // Add CORS headers for image upload response
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    
     if (!req.file) {
       return res.status(400).json({ success: 0, message: "No file uploaded" });
     }
@@ -244,6 +259,10 @@ app.post("/upload", upload.single('product'), async (req, res) => {
 // Multiple image upload for product galleries
 app.post("/upload-multiple", upload.array('products', 5), async (req, res) => {
   try {
+    // Add CORS headers for image upload response
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: 0, message: "No files uploaded" });
     }
@@ -564,6 +583,23 @@ app.use('/api/admin/auth', adminAuthRoutes);
 
 // Admin settings routes
 app.use('/api/admin/settings', adminSettingsRoutes);
+
+// Load and mount comprehensive admin dashboard routes
+try {
+  const adminDashboardRoutes = require('./routes/admin');
+  app.use('/api/admin', adminDashboardRoutes);
+  console.log('✅ Admin dashboard routes loaded successfully');
+} catch (error) {
+  console.error('❌ Error loading admin dashboard routes:', error.message);
+  // Create fallback route for admin dashboard
+  app.all('/api/admin/*', (req, res) => {
+    res.status(503).json({
+      success: false,
+      message: 'Admin dashboard temporarily unavailable',
+      error: error.message
+    });
+  });
+}
 
 // Temporary admin seeding endpoint (remove after use)
 app.post('/seed-admin', async (req, res) => {
@@ -1396,7 +1432,7 @@ const validateImage = (file) => {
 };
 
 // Upload shop image
-app.post("/admin/shop-images/upload", fetchuser, upload.single('shopImage'), async (req, res) => {
+app.post("/admin/shop-images/upload", requireAdminAuth, upload.single('shopImage'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
@@ -1468,6 +1504,12 @@ app.get("/admin/shop-images", requireAdminAuth, async (req, res) => {
 // Get shop images by type (public endpoint for frontend)
 app.get("/shop-images/:type?", async (req, res) => {
   try {
+    // Add CORS headers for image access
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    
     const { type } = req.params;
     const query = type ? { imageType: type, visible: true } : { visible: true };
     const images = await ShopImage.find(query).sort({ order: 1 });
@@ -1478,7 +1520,7 @@ app.get("/shop-images/:type?", async (req, res) => {
 });
 
 // Update shop image
-app.put("/admin/shop-images/:id", fetchuser, async (req, res) => {
+app.put("/admin/shop-images/:id", requireAdminAuth, async (req, res) => {
   try {
     const { title, description, visible, order, category } = req.body;
     
@@ -1505,7 +1547,7 @@ app.put("/admin/shop-images/:id", fetchuser, async (req, res) => {
 });
 
 // Replace image file
-app.put("/admin/shop-images/:id/replace", fetchuser, upload.single('shopImage'), async (req, res) => {
+app.put("/admin/shop-images/:id/replace", requireAdminAuth, upload.single('shopImage'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
@@ -1548,7 +1590,7 @@ app.put("/admin/shop-images/:id/replace", fetchuser, upload.single('shopImage'),
 });
 
 // Reorder images
-app.post("/admin/shop-images/reorder", fetchuser, async (req, res) => {
+app.post("/admin/shop-images/reorder", requireAdminAuth, async (req, res) => {
   try {
     const { imageIds } = req.body; // Array of image IDs in new order
     
@@ -1571,7 +1613,7 @@ app.post("/admin/shop-images/reorder", fetchuser, async (req, res) => {
 });
 
 // Delete shop image
-app.delete("/admin/shop-images/:id", fetchuser, async (req, res) => {
+app.delete("/admin/shop-images/:id", requireAdminAuth, async (req, res) => {
   try {
     const image = await ShopImage.findOneAndDelete({ id: parseInt(req.params.id) });
     
@@ -1591,7 +1633,7 @@ app.delete("/admin/shop-images/:id", fetchuser, async (req, res) => {
 });
 
 // Toggle image visibility
-app.post("/admin/shop-images/:id/toggle-visibility", fetchuser, async (req, res) => {
+app.post("/admin/shop-images/:id/toggle-visibility", requireAdminAuth, async (req, res) => {
   try {
     const image = await ShopImage.findOne({ id: parseInt(req.params.id) });
     
@@ -1617,6 +1659,10 @@ app.post("/admin/shop-images/:id/toggle-visibility", fetchuser, async (req, res)
 // Get all collections (public endpoint for frontend)
 app.get("/collections", async (req, res) => {
   try {
+    // Add CORS headers for cross-origin access
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    
     const collections = await Collection.find({ isVisible: true })
       .populate('products')
       .sort({ order: 1 });
@@ -1639,7 +1685,7 @@ app.get("/admin/collections", requireAdminAuth, async (req, res) => {
 });
 
 // Create new collection
-app.post("/admin/collections", fetchuser, async (req, res) => {
+app.post("/admin/collections", requireAdminAuth, async (req, res) => {
   try {
     const { name, bannerImage, products = [], isVisible = true } = req.body;
     
@@ -1675,7 +1721,7 @@ app.post("/admin/collections", fetchuser, async (req, res) => {
 });
 
 // Update collection
-app.put("/admin/collections/:id", fetchuser, async (req, res) => {
+app.put("/admin/collections/:id", requireAdminAuth, async (req, res) => {
   try {
     const { name, bannerImage, products, isVisible, order } = req.body;
     
@@ -1702,7 +1748,7 @@ app.put("/admin/collections/:id", fetchuser, async (req, res) => {
 });
 
 // Delete collection
-app.delete("/admin/collections/:id", fetchuser, async (req, res) => {
+app.delete("/admin/collections/:id", requireAdminAuth, async (req, res) => {
   try {
     const collection = await Collection.findByIdAndDelete(req.params.id);
     
@@ -1722,7 +1768,7 @@ app.delete("/admin/collections/:id", fetchuser, async (req, res) => {
 });
 
 // Add products to collection
-app.post("/admin/collections/:id/products", fetchuser, async (req, res) => {
+app.post("/admin/collections/:id/products", requireAdminAuth, async (req, res) => {
   try {
     const { productIds } = req.body;
     
@@ -1753,7 +1799,7 @@ app.post("/admin/collections/:id/products", fetchuser, async (req, res) => {
 });
 
 // Remove products from collection
-app.delete("/admin/collections/:id/products", fetchuser, async (req, res) => {
+app.delete("/admin/collections/:id/products", requireAdminAuth, async (req, res) => {
   try {
     const { productIds } = req.body;
     
@@ -1782,7 +1828,7 @@ app.delete("/admin/collections/:id/products", fetchuser, async (req, res) => {
 });
 
 // Reorder collections
-app.post("/admin/collections/reorder", fetchuser, async (req, res) => {
+app.post("/admin/collections/reorder", requireAdminAuth, async (req, res) => {
   try {
     const { collectionIds } = req.body;
     
@@ -1805,7 +1851,7 @@ app.post("/admin/collections/reorder", fetchuser, async (req, res) => {
 });
 
 // Toggle collection visibility
-app.post("/admin/collections/:id/toggle-visibility", fetchuser, async (req, res) => {
+app.post("/admin/collections/:id/toggle-visibility", requireAdminAuth, async (req, res) => {
   try {
     const collection = await Collection.findById(req.params.id);
     
@@ -1827,7 +1873,7 @@ app.post("/admin/collections/:id/toggle-visibility", fetchuser, async (req, res)
 });
 
 // Upload collection banner image
-app.post("/admin/collections/upload-banner", fetchuser, upload.single('banner'), async (req, res) => {
+app.post("/admin/collections/upload-banner", requireAdminAuth, upload.single('banner'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
@@ -1881,7 +1927,7 @@ app.get("/admin/email/notifications", requireAdminAuth, async (req, res) => {
 });
 
 // Update notification settings
-app.post("/admin/email/notifications/settings", fetchuser, async (req, res) => {
+app.post("/admin/email/notifications/settings", requireAdminAuth, async (req, res) => {
   try {
     const { lowStockAlerts, orderConfirmations, welcomeEmails, marketingEmails, adminAlerts } = req.body;
     
@@ -1905,7 +1951,7 @@ app.post("/admin/email/notifications/settings", fetchuser, async (req, res) => {
 });
 
 // Send test email
-app.post("/admin/email/notifications/test", fetchuser, async (req, res) => {
+app.post("/admin/email/notifications/test", requireAdminAuth, async (req, res) => {
   try {
     const { to, subject = 'Test Email from Damio Kids Admin' } = req.body;
     
@@ -1937,7 +1983,7 @@ app.post("/admin/email/notifications/test", fetchuser, async (req, res) => {
 });
 
 // Get email logs (mock implementation)
-app.get("/admin/email/notifications/logs", fetchuser, async (req, res) => {
+app.get("/admin/email/notifications/logs", requireAdminAuth, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
     
@@ -1986,6 +2032,65 @@ app.get("/admin/email/notifications/logs", fetchuser, async (req, res) => {
   }
 });
 
+
+// Global error handler middleware (must be after all routes)
+app.use((error, req, res, next) => {
+  console.error('🚨 Global error handler caught:', error);
+  
+  // Log request details for debugging
+  console.error('Request details:', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    headers: req.headers
+  });
+  
+  // Always return JSON error responses
+  const response = {
+    success: false,
+    message: error.message || 'Internal server error',
+    timestamp: new Date().toISOString()
+  };
+  
+  // Add more details in development
+  if (process.env.NODE_ENV !== 'production') {
+    response.stack = error.stack;
+    response.details = {
+      name: error.name,
+      code: error.code
+    };
+  }
+  
+  // Determine status code
+  let statusCode = 500;
+  if (error.statusCode) {
+    statusCode = error.statusCode;
+  } else if (error.name === 'ValidationError') {
+    statusCode = 400;
+  } else if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+    statusCode = 401;
+  } else if (error.code === 11000) { // MongoDB duplicate key
+    statusCode = 409;
+    response.message = 'Duplicate entry found';
+  }
+  
+  res.status(statusCode).json(response);
+});
+
+// Handle 404 for unknown routes
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.method} ${req.originalUrl} not found`,
+    availableEndpoints: {
+      health: 'GET /health',
+      auth: 'POST /login, POST /signup',
+      admin: 'POST /api/admin/auth/login',
+      products: 'GET /allproducts',
+      public: 'GET /categories, GET /wilayas'
+    }
+  });
+});
 
 // For Vercel serverless functions, export the app instead of listening
 module.exports = app;
