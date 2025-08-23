@@ -242,7 +242,7 @@ router.get('/system/health', asyncHandler(async (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    version: '2.0.0'
+    version: '2.0.1'
   };
   
   res.json({
