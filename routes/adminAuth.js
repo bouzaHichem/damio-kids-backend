@@ -310,4 +310,55 @@ router.get('/verify', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Temporary admin creation endpoint for initial setup
+router.post('/create-initial-admin', async (req, res) => {
+  try {
+    console.log('🔧 Initial admin creation attempt');
+    
+    // Check if any admin already exists
+    const existingAdmin = await Admin.findOne({});
+    
+    if (existingAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin users already exist in the system',
+        code: 'ADMIN_EXISTS'
+      });
+    }
+    
+    // Create the initial super admin
+    const adminData = {
+      email: 'admin@damiokids.com',
+      password: 'AdminPassword123!',
+      firstName: 'Admin',
+      lastName: 'User',
+      role: 'super_admin',
+      isActive: true
+    };
+    
+    const newAdmin = new Admin(adminData);
+    const savedAdmin = await newAdmin.save();
+    
+    console.log('✅ Initial admin created successfully:', savedAdmin.email);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Initial admin created successfully',
+      admin: {
+        email: savedAdmin.email,
+        role: savedAdmin.role,
+        createdAt: savedAdmin.createdAt
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating initial admin:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create initial admin',
+      code: 'CREATION_ERROR'
+    });
+  }
+});
+
 module.exports = router;
