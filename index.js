@@ -13,6 +13,63 @@ const { v2: cloudinary } = require('cloudinary');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const port = process.env.PORT || 4000;
 
+// CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    console.log('🌐 CORS check for origin:', origin);
+
+    if (!origin) {
+      console.log('✅ CORS: Allowing request with no origin (direct API call)');
+      return callback(null, true);
+    }
+
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001',
+      process.env.FRONTEND_URL,
+      process.env.ADMIN_URL,
+      'https://damio-kids-final-project.vercel.app',
+      'https://damio-kids-admin.vercel.app'
+    ].filter(Boolean);
+
+    // In development, be permissive for Vercel previews and localhost
+    if (process.env.NODE_ENV !== 'production') {
+      const isVercelPreview = origin && (origin.includes('vercel.app') || origin.includes('localhost') || origin.includes('127.0.0.1'));
+      if (isVercelPreview) {
+        console.log('✅ CORS: Allowing Vercel/localhost origin (development):', origin);
+        return callback(null, true);
+      }
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      console.log('✅ CORS: Origin allowed:', origin);
+      callback(null, true);
+    } else {
+      console.warn('❌ CORS: Blocked request from origin:', origin);
+      // In production, block; in dev, allow
+      if (process.env.NODE_ENV !== 'production') return callback(null, true);
+      callback(new Error('Not allowed by CORS policy'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'auth-token',
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+// IMPORTANT: Apply CORS first, before any other middleware that could reject the request
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 // Security middleware
 app.use(helmet());
 app.use(express.json({ limit: '10mb' })); // Set JSON payload limit
@@ -58,85 +115,7 @@ app.use('/signup', authLimiter);
 app.use('/upload', uploadLimiter);
 app.use('/upload-multiple', uploadLimiter);
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    console.log('🌐 CORS check for origin:', origin);
-    
-    // Allow requests with no origin (like mobile apps, curl, Postman, health checks)
-    if (!origin) {
-      console.log('✅ CORS: Allowing request with no origin (direct API call)');
-      return callback(null, true);
-    }
-    
-    const allowedOrigins = [
-      'http://localhost:3000',    // Local frontend development
-      'http://localhost:3001',    // Local admin development
-      'http://127.0.0.1:3000',    // Alternative localhost
-      'http://127.0.0.1:3001',    // Alternative localhost
-      process.env.FRONTEND_URL,   // Production frontend URL
-      process.env.ADMIN_URL,      // Production admin URL
-    ].filter(Boolean); // Remove undefined values
-    
-    // Add common Vercel URLs (both for main and admin)
-    const vercelUrls = [
-      'https://damio-kids-final-project-hnvnrxzrl-hichems-projects-d5b6dfcd.vercel.app',
-      'https://damio-kids-final-project-bhz7a3q9u-hichems-projects-d5b6dfcd.vercel.app',
-      'https://damio-kids-final-project-yor62j7zs-hichems-projects-d5b6dfcd.vercel.app',
-      'https://damio-kids-final-project-by98m3xod-hichems-projects-d5b6dfcd.vercel.app',
-      'https://damio-kids-final-project.vercel.app',
-      'https://damio-kids-admin.vercel.app',
-      'https://damio-kids-admin-vercel.app', // Additional admin domain
-      'https://admin.damiokids.com', // Production admin domain
-    ];
-    
-    allowedOrigins.push(...vercelUrls);
-    
-    // In development, be more permissive with Vercel preview URLs
-    if (process.env.NODE_ENV !== 'production') {
-      const isVercelPreview = origin && (
-        origin.includes('vercel.app') ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1')
-      );
-      
-      if (isVercelPreview) {
-        console.log('✅ CORS: Allowing Vercel/localhost origin (development):', origin);
-        return callback(null, true);
-      }
-    }
-    
-    console.log('🔍 CORS: Checking origin against allowed list:', allowedOrigins);
-    
-    if (allowedOrigins.includes(origin)) {
-      console.log('✅ CORS: Origin allowed:', origin);
-      callback(null, true);
-    } else {
-      console.warn('❌ CORS: Blocked request from origin:', origin);
-      console.warn('Allowed origins:', allowedOrigins);
-      // In development, log but don't block
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('⚠️ CORS: Allowing blocked origin due to development mode');
-        return callback(null, true);
-      }
-      callback(new Error('Not allowed by CORS policy'));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type', 
-    'Authorization', 
-    'auth-token',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Cookie'
-  ],
-  credentials: true,
-  optionsSuccessStatus: 200 // For legacy browser support
-};
-
-app.use(cors(corsOptions));
+// (moved) CORS is applied above
 app.use(cookieParser()); // Parse cookies for admin authentication
 
 // Static file serving with CORS headers for images
