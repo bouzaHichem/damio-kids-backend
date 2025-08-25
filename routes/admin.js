@@ -444,7 +444,8 @@ router.get('/deliveryrates', asyncHandler(async (req, res) => {
   if (deliveryType) filter.deliveryType = deliveryType;
 
   const rates = await DeliveryFee.find(filter).sort({ wilaya: 1, commune: 1 }).lean();
-  res.json({ success: true, data: rates });
+  // Return both keys for compatibility
+  res.json({ success: true, rates, data: rates });
 }));
 
 // Shop images list (admin)
@@ -461,7 +462,8 @@ router.get('/shop-images', asyncHandler(async (req, res) => {
   if (visible !== undefined) filter.visible = visible === 'true';
 
   const images = await ShopImage.find(filter).sort({ imageType: 1, order: 1 }).lean();
-  res.json({ success: true, data: images });
+  // Return both keys for compatibility with various admin UIs
+  res.json({ success: true, images, data: images });
 }));
 
 // Notifications settings (admin)
