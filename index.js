@@ -54,11 +54,6 @@ const corsOptions = {
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  // Reflect requested headers to avoid missing any browser-specific headers in preflight (e.g., sec-ch-ua*)
-  allowedHeaders: function (req, callback) {
-    const reqHeaders = req.header('Access-Control-Request-Headers');
-    callback(null, reqHeaders || 'Content-Type, Authorization');
-  },
   credentials: true,
   optionsSuccessStatus: 200
 };
