@@ -18,40 +18,56 @@ const corsOptions = {
   origin: function (origin, callback) {
     console.log('🌐 CORS check for origin:', origin);
 
+    // Allow server-to-server or same-origin requests with no Origin header
     if (!origin) {
       console.log('✅ CORS: Allowing request with no origin (direct API call)');
       return callback(null, true);
     }
 
+    // Explicitly allowed origins (local + production)
     const allowedOrigins = [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
       'http://localhost:3000',
       'http://localhost:3001',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:3001',
       process.env.FRONTEND_URL,
       process.env.ADMIN_URL,
+      'https://damio-kids-frontend.vercel.app',
       'https://damio-kids-final-project.vercel.app',
       'https://damio-kids-admin.vercel.app'
     ].filter(Boolean);
 
-    // In development, be permissive for Vercel previews and localhost
-    if (process.env.NODE_ENV !== 'production') {
-      const isVercelPreview = origin && (origin.includes('vercel.app') || origin.includes('localhost') || origin.includes('127.0.0.1'));
-      if (isVercelPreview) {
-        console.log('✅ CORS: Allowing Vercel/localhost origin (development):', origin);
-        return callback(null, true);
-      }
+    // Allow all Vercel preview URLs for your specific projects (admin/frontend)
+    let hostname = null;
+    try {
+      hostname = new URL(origin).hostname;
+    } catch (e) {
+      console.warn('⚠️ CORS: Invalid Origin header:', origin);
+      return callback(new Error('Not allowed by CORS policy'));
     }
 
-    if (allowedOrigins.includes(origin)) {
+    const isVercelPreview = hostname.endsWith('.vercel.app') && (
+      hostname.startsWith('damio-kids-admin-') ||
+      hostname.startsWith('damio-kids-frontend-') ||
+      hostname.startsWith('damio-kids-final-project-') ||
+      hostname.includes('hichems-projects')
+    );
+
+    if (allowedOrigins.includes(origin) || isVercelPreview) {
       console.log('✅ CORS: Origin allowed:', origin);
-      callback(null, true);
-    } else {
-      console.warn('❌ CORS: Blocked request from origin:', origin);
-      // In production, block; in dev, allow
-      if (process.env.NODE_ENV !== 'production') return callback(null, true);
-      callback(new Error('Not allowed by CORS policy'));
+      return callback(null, true);
     }
+
+    // In non-production, be permissive for development
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('🟡 CORS (dev): Allowing unknown origin:', origin);
+      return callback(null, true);
+    }
+
+    console.warn('❌ CORS: Blocked request from origin:', origin);
+    return callback(new Error('Not allowed by CORS policy'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: [
