@@ -2077,6 +2077,96 @@ app.use((error, req, res, next) => {
   res.status(statusCode).json(response);
 });
 
+// Aliases with /api/admin prefix for admin endpoints defined under /admin
+// Fixes 404s from admin panel calling /api/admin/... paths
+app.post("/api/admin/shop-images/upload", requireAdminAuth, upload.single('shopImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const validation = validateImage(req.file);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    const { title, description, imageType, category } = req.body;
+
+    if (!title || !imageType) {
+      return res.status(400).json({ success: false, message: "Title and image type are required" });
+    }
+
+    // Get the image URL
+    let imageUrl;
+    if (process.env.NODE_ENV === 'production' && req.file.path) {
+      imageUrl = req.file.path; // Cloudinary URL
+    } else {
+      imageUrl = `/images/${req.file.filename || Date.now()}`; // Local fallback
+    }
+
+    // Get next ID
+    const images = await ShopImage.find({});
+    const id = images.length ? Math.max(...images.map(img => img.id)) + 1 : 1;
+
+    // Get next order for this image type
+    const typeImages = await ShopImage.find({ imageType });
+    const order = typeImages.length ? Math.max(...typeImages.map(img => img.order)) + 1 : 0;
+
+    const shopImage = new ShopImage({
+      id,
+      title,
+      description: description || '',
+      image: imageUrl,
+      imageType,
+      category: category || null,
+      order,
+      visible: true
+    });
+
+    await shopImage.save();
+
+    res.json({
+      success: true,
+      image: shopImage,
+      message: "Image uploaded successfully"
+    });
+  } catch (error) {
+    console.error("Upload Shop Image Error (alias):", error);
+    res.status(500).json({ success: false, message: "Error uploading image", error: error.message });
+  }
+});
+
+// Alias for uploading collection banner under /api/admin
+app.post("/api/admin/collections/upload-banner", requireAdminAuth, upload.single('banner'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const validation = validateImage(req.file);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+
+    // Get the image URL based on environment
+    let imageUrl;
+    if (process.env.NODE_ENV === 'production' && req.file.path) {
+      imageUrl = req.file.path; // Cloudinary URL
+    } else {
+      imageUrl = `/images/${req.file.filename || Date.now()}`; // Local fallback
+    }
+
+    res.json({
+      success: true,
+      image_url: imageUrl,
+      message: "Banner uploaded successfully"
+    });
+  } catch (error) {
+    console.error("Upload Banner Error (alias):", error);
+    res.status(500).json({ success: false, message: "Error uploading banner", error: error.message });
+  }
+});
+
 // Handle 404 for unknown routes
 app.use('*', (req, res) => {
   res.status(404).json({
