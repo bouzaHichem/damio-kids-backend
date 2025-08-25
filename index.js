@@ -557,7 +557,7 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "OK", 
     message: "Damio Kids API is running", 
-    version: "2.1.0-admin-fixed",
+    version: "2.1.1-cors-headers",
     timestamp: new Date().toISOString() 
   });
 });
