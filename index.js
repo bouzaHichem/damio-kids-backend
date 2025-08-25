@@ -2167,6 +2167,29 @@ app.post("/api/admin/collections/upload-banner", requireAdminAuth, upload.single
   }
 });
 
+// Alias for reordering shop images under /api/admin
+app.post("/api/admin/shop-images/reorder", requireAdminAuth, async (req, res) => {
+  try {
+    const { imageIds } = req.body; // Array of image IDs in the new order
+
+    if (!Array.isArray(imageIds)) {
+      return res.status(400).json({ success: false, message: "Image IDs must be an array" });
+    }
+
+    for (let i = 0; i < imageIds.length; i++) {
+      await ShopImage.findOneAndUpdate(
+        { id: imageIds[i] },
+        { order: i }
+      );
+    }
+
+    res.json({ success: true, message: "Images reordered successfully" });
+  } catch (error) {
+    console.error("Reorder Shop Images Error (alias):", error);
+    res.status(500).json({ success: false, message: "Error reordering images", error: error.message });
+  }
+});
+
 // Handle 404 for unknown routes
 app.use('*', (req, res) => {
   res.status(404).json({
