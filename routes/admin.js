@@ -481,4 +481,29 @@ router.get('/notifications', asyncHandler(async (req, res) => {
   res.json({ success: true, settings: notificationSettings });
 }));
 
+// Orders list (admin)
+router.get('/orders', asyncHandler(async (req, res) => {
+  const Order = getOrderModel();
+  if (!Order) {
+    return res.status(503).json({ success: false, error: 'Order model not available' });
+  }
+  const orders = await Order.find({}).sort({ date: -1 }).lean();
+  // Return plain array for UI compatibility
+  res.json(orders);
+}));
+
+// Update order status (admin)
+router.post('/updateorder', asyncHandler(async (req, res) => {
+  const Order = getOrderModel();
+  if (!Order) {
+    return res.status(503).json({ success: false, error: 'Order model not available' });
+  }
+  const { orderId, status } = req.body;
+  if (!orderId || !status) {
+    return res.status(400).json({ success: false, error: 'orderId and status are required' });
+  }
+  await Order.findByIdAndUpdate(orderId, { status });
+  res.json({ success: true });
+}));
+
 module.exports = router;

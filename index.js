@@ -584,6 +584,15 @@ app.use('/api/admin/auth', adminAuthRoutes);
 // Admin settings routes
 app.use('/api/admin/settings', adminSettingsRoutes);
 
+// Mount consolidated admin routes (dashboard, products, customers, inventory, deliveryrates, shop-images, notifications, etc.)
+try {
+  const adminRoutes = require('./routes/admin');
+  app.use('/api/admin', adminRoutes);
+  console.log('✅ Admin routes mounted at /api/admin');
+} catch (e) {
+  console.error('❌ Failed to load consolidated admin routes:', e.message);
+}
+
 // Load and mount comprehensive admin dashboard routes
 try {
   const adminDashboardRoutes = require('./routes/admin');
