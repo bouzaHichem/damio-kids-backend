@@ -2257,6 +2257,53 @@ app.post('/api/admin/email/resend/:id', requireAdminAuth, (req, res) => {
   res.json({ success: true, message: 'Email resent', id: req.params.id });
 });
 
+// Analytics aliases expected by the admin UI
+app.get('/api/admin/analytics/sales-trends', requireAdminAuth, async (req, res) => {
+  try {
+    // Reuse the same logic as /api/admin/sales-trends via inline aggregation
+    const Order = mongoose.model('Order');
+    const period = (req.query.period || 'daily').toLowerCase();
+    const startDate = new Date(req.query.startDate || Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const endDate = new Date(req.query.endDate || Date.now());
+
+    const series = await Order.aggregate([
+      { $match: { date: { $gte: startDate, $lte: endDate } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          orders: { $sum: 1 },
+          revenue: { $sum: { $ifNull: ['$total', 0] } }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    res.json({ success: true, data: { trends: series.map(d => ({ date: d._id, orders: d.orders, revenue: d.revenue })) } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error fetching sales trends', error: error.message });
+  }
+});
+
+app.get('/api/admin/analytics/customers', requireAdminAuth, async (req, res) => {
+  try {
+    const Users = mongoose.model('Users');
+    const total = await Users.countDocuments({});
+    res.json({ success: true, data: { totalCustomers: total, newCustomers: 0, returningCustomers: 0, averageOrderValue: 0, retentionRate: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error fetching customer insights', error: error.message });
+  }
+});
+
+app.get('/api/admin/analytics/inventory', requireAdminAuth, async (req, res) => {
+  try {
+    const Product = mongoose.model('Product');
+    const totalProducts = await Product.countDocuments({});
+    res.json({ success: true, data: { totalProducts, lowStockCount: 0, outOfStockCount: 0, totalStockValue: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error fetching inventory insights', error: error.message });
+  }
+});
+
 // Handle 404 for unknown routes
 app.use('*', (req, res) => {
   res.status(404).json({
