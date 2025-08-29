@@ -1244,6 +1244,118 @@ app.get("/admin/categories", fetchuser, async (req, res) => {
   }
 });
 
+// === Admin categories aliases under /api/admin using admin auth ===
+app.get('/api/admin/categories', requireAdminAuth, async (req, res) => {
+  try {
+    const categories = await Category.find({}).sort({ name: 1 });
+    res.json({ success: true, categories });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error fetching categories', error: error.message });
+  }
+});
+
+app.post('/api/admin/categories', requireAdminAuth, async (req, res) => {
+  try {
+    const { name, subcategories = [] } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Category name is required' });
+
+    const existing = await Category.findOne({ name });
+    if (existing) return res.status(400).json({ success: false, message: 'Category already exists' });
+
+    const cats = await Category.find({});
+    const id = cats.length ? Math.max(...cats.map(c => c.id)) + 1 : 1;
+    const processed = subcategories.map((sub, i) => ({ id: i + 1, name: typeof sub === 'string' ? sub : sub.name }));
+    const category = new Category({ id, name, subcategories: processed });
+    await category.save();
+    res.json({ success: true, category });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error creating category', error: error.message });
+  }
+});
+
+app.put('/api/admin/categories/:id', requireAdminAuth, async (req, res) => {
+  try {
+    const { name, subcategories = [] } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Category name is required' });
+
+    const processed = subcategories.map((sub, idx) => ({ id: sub.id || idx + 1, name: typeof sub === 'string' ? sub : sub.name }));
+    const category = await Category.findOneAndUpdate(
+      { id: parseInt(req.params.id) },
+      { name, subcategories: processed },
+      { new: true }
+    );
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+    res.json({ success: true, category });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error updating category', error: error.message });
+  }
+});
+
+app.delete('/api/admin/categories/:id', requireAdminAuth, async (req, res) => {
+  try {
+    const category = await Category.findOneAndDelete({ id: parseInt(req.params.id) });
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+    res.json({ success: true, message: 'Category deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error deleting category', error: error.message });
+  }
+});
+
+app.post('/api/admin/categories/:id/subcategories', requireAdminAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Subcategory name is required' });
+
+    const category = await Category.findOne({ id: parseInt(req.params.id) });
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+
+    const exists = category.subcategories.find(s => s.name === name);
+    if (exists) return res.status(400).json({ success: false, message: 'Subcategory already exists' });
+
+    const newId = category.subcategories.length ? Math.max(...category.subcategories.map(s => s.id)) + 1 : 1;
+    category.subcategories.push({ id: newId, name });
+    await category.save();
+    res.json({ success: true, category });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error adding subcategory', error: error.message });
+  }
+});
+
+app.put('/api/admin/categories/:categoryId/subcategories/:subcategoryId', requireAdminAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: 'Subcategory name is required' });
+
+    const category = await Category.findOne({ id: parseInt(req.params.categoryId) });
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+
+    const idx = category.subcategories.findIndex(s => s.id === parseInt(req.params.subcategoryId));
+    if (idx === -1) return res.status(404).json({ success: false, message: 'Subcategory not found' });
+
+    category.subcategories[idx].name = name;
+    await category.save();
+    res.json({ success: true, category });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error updating subcategory', error: error.message });
+  }
+});
+
+app.delete('/api/admin/categories/:categoryId/subcategories/:subcategoryId', requireAdminAuth, async (req, res) => {
+  try {
+    const category = await Category.findOne({ id: parseInt(req.params.categoryId) });
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+
+    const idx = category.subcategories.findIndex(s => s.id === parseInt(req.params.subcategoryId));
+    if (idx === -1) return res.status(404).json({ success: false, message: 'Subcategory not found' });
+
+    category.subcategories.splice(idx, 1);
+    await category.save();
+    res.json({ success: true, category });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error deleting subcategory', error: error.message });
+  }
+});
+
 // Add new category
 app.post("/admin/categories", fetchuser, async (req, res) => {
   try {
