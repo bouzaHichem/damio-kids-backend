@@ -1914,6 +1914,123 @@ app.post("/admin/collections/upload-banner", requireAdminAuth, upload.single('ba
   }
 });
 
+// === Compatibility duplicates under /api/admin to match admin panel expectations ===
+// Get all collections
+app.get("/api/admin/collections", requireAdminAuth, async (req, res) => {
+  try {
+    const collections = await Collection.find({})
+      .populate('products')
+      .sort({ order: 1 });
+    res.json({ success: true, collections });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error fetching collections", error: error.message });
+  }
+});
+
+// Create new collection
+app.post("/api/admin/collections", requireAdminAuth, async (req, res) => {
+  try {
+    const { name, bannerImage, products = [], isVisible = true } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ success: false, message: "Collection name is required" });
+    }
+
+    const existingCollection = await Collection.findOne({ name });
+    if (existingCollection) {
+      return res.status(400).json({ success: false, message: "Collection already exists" });
+    }
+
+    const collections = await Collection.find({});
+    const order = collections.length ? Math.max(...collections.map(c => c.order || 0)) + 1 : 0;
+
+    const collection = new Collection({ name, bannerImage, products, isVisible, order });
+    await collection.save();
+    await collection.populate('products');
+
+    res.json({ success: true, collection, message: "Collection created successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error creating collection", error: error.message });
+  }
+});
+
+// Update collection
+app.put("/api/admin/collections/:id", requireAdminAuth, async (req, res) => {
+  try {
+    const { name, bannerImage, products, isVisible, order } = req.body;
+    const collection = await Collection.findByIdAndUpdate(
+      req.params.id,
+      {
+        name: name || undefined,
+        bannerImage: bannerImage !== undefined ? bannerImage : undefined,
+        products: products || undefined,
+        isVisible: isVisible !== undefined ? isVisible : undefined,
+        order: order !== undefined ? order : undefined
+      },
+      { new: true }
+    ).populate('products');
+
+    if (!collection) {
+      return res.status(404).json({ success: false, message: "Collection not found" });
+    }
+
+    res.json({ success: true, collection, message: "Collection updated successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error updating collection", error: error.message });
+  }
+});
+
+// Delete collection
+app.delete("/api/admin/collections/:id", requireAdminAuth, async (req, res) => {
+  try {
+    const collection = await Collection.findByIdAndDelete(req.params.id);
+    if (!collection) {
+      return res.status(404).json({ success: false, message: "Collection not found" });
+    }
+    res.json({ success: true, message: "Collection deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error deleting collection", error: error.message });
+  }
+});
+
+// Toggle visibility
+app.post("/api/admin/collections/:id/toggle-visibility", requireAdminAuth, async (req, res) => {
+  try {
+    const collection = await Collection.findById(req.params.id);
+    if (!collection) {
+      return res.status(404).json({ success: false, message: "Collection not found" });
+    }
+    collection.isVisible = !collection.isVisible;
+    await collection.save();
+    res.json({ success: true, collection, message: `Collection ${collection.isVisible ? 'shown' : 'hidden'} successfully` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error toggling visibility", error: error.message });
+  }
+});
+
+// Upload banner (api path)
+app.post("/api/admin/collections/upload-banner", requireAdminAuth, upload.single('banner'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+    const validation = validateImage(req.file);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: validation.message });
+    }
+    let imageUrl;
+    if (process.env.NODE_ENV === 'production' && req.file.path) {
+      imageUrl = req.file.path;
+    } else {
+      imageUrl = `/images/${req.file.filename || Date.now()}`;
+    }
+    res.json({ success: true, image_url: imageUrl, message: "Banner uploaded successfully" });
+  } catch (error) {
+    console.error("Upload Banner Error:", error);
+    res.status(500).json({ success: false, message: "Error uploading banner", error: error.message });
+  }
+});
+
 // Email Notifications Management API
 // Get notification settings
 app.get("/admin/email/notifications", requireAdminAuth, async (req, res) => {
