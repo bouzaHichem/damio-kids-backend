@@ -371,6 +371,7 @@ const Product = mongoose.model("Product", {
   image: String,
   images: [String], // Multiple images support
   category: String,
+  subcategory: String, // store subcategory id or name
   new_price: Number,
   old_price: Number,
   // Product variants
