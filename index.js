@@ -438,6 +438,7 @@ const Wilaya = mongoose.model("Wilaya", {
 const Category = mongoose.model("Category", {
   id: { type: Number, required: true, unique: true },
   name: { type: String, required: true, unique: true },
+  bannerImage: { type: String, default: '' },
   subcategories: [{
     id: { type: Number, required: true },
     name: { type: String, required: true }
@@ -1245,6 +1246,24 @@ app.get("/admin/categories", fetchuser, async (req, res) => {
 });
 
 // === Admin categories aliases under /api/admin using admin auth ===
+// Upload category banner (api path)
+app.post('/api/admin/categories/upload-banner', requireAdminAuth, upload.single('banner'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const validation = validateImage(req.file);
+    if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+    let imageUrl;
+    if (process.env.NODE_ENV === 'production' && req.file.path) {
+      imageUrl = req.file.path;
+    } else {
+      imageUrl = `/images/${req.file.filename || Date.now()}`;
+    }
+    res.json({ success: true, image_url: imageUrl, message: 'Banner uploaded successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error uploading banner', error: error.message });
+  }
+});
+
 app.get('/api/admin/categories', requireAdminAuth, async (req, res) => {
   try {
     const categories = await Category.find({}).sort({ name: 1 });
@@ -1256,7 +1275,7 @@ app.get('/api/admin/categories', requireAdminAuth, async (req, res) => {
 
 app.post('/api/admin/categories', requireAdminAuth, async (req, res) => {
   try {
-    const { name, subcategories = [] } = req.body;
+    const { name, subcategories = [], bannerImage = '' } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Category name is required' });
 
     const existing = await Category.findOne({ name });
@@ -1265,7 +1284,7 @@ app.post('/api/admin/categories', requireAdminAuth, async (req, res) => {
     const cats = await Category.find({});
     const id = cats.length ? Math.max(...cats.map(c => c.id)) + 1 : 1;
     const processed = subcategories.map((sub, i) => ({ id: i + 1, name: typeof sub === 'string' ? sub : sub.name }));
-    const category = new Category({ id, name, subcategories: processed });
+    const category = new Category({ id, name, bannerImage, subcategories: processed });
     await category.save();
     res.json({ success: true, category });
   } catch (error) {
@@ -1275,13 +1294,13 @@ app.post('/api/admin/categories', requireAdminAuth, async (req, res) => {
 
 app.put('/api/admin/categories/:id', requireAdminAuth, async (req, res) => {
   try {
-    const { name, subcategories = [] } = req.body;
+    const { name, subcategories = [], bannerImage } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'Category name is required' });
 
     const processed = subcategories.map((sub, idx) => ({ id: sub.id || idx + 1, name: typeof sub === 'string' ? sub : sub.name }));
     const category = await Category.findOneAndUpdate(
       { id: parseInt(req.params.id) },
-      { name, subcategories: processed },
+      { name, subcategories: processed, bannerImage: bannerImage !== undefined ? bannerImage : undefined },
       { new: true }
     );
     if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
@@ -1356,10 +1375,28 @@ app.delete('/api/admin/categories/:categoryId/subcategories/:subcategoryId', req
   }
 });
 
+// Upload category banner (legacy /admin path)
+app.post('/admin/categories/upload-banner', fetchuser, upload.single('banner'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+    const validation = validateImage(req.file);
+    if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+    let imageUrl;
+    if (process.env.NODE_ENV === 'production' && req.file.path) {
+      imageUrl = req.file.path;
+    } else {
+      imageUrl = `/images/${req.file.filename || Date.now()}`;
+    }
+    res.json({ success: true, image_url: imageUrl, message: 'Banner uploaded successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error uploading banner', error: error.message });
+  }
+});
+
 // Add new category
 app.post("/admin/categories", fetchuser, async (req, res) => {
   try {
-    const { name, subcategories = [] } = req.body;
+    const { name, subcategories = [], bannerImage = '' } = req.body;
     
     // Validation
     if (!name) {
@@ -1385,6 +1422,7 @@ app.post("/admin/categories", fetchuser, async (req, res) => {
     const category = new Category({ 
       id, 
       name, 
+      bannerImage,
       subcategories: processedSubcategories 
     });
     
@@ -1398,7 +1436,7 @@ app.post("/admin/categories", fetchuser, async (req, res) => {
 // Update category
 app.put("/admin/categories/:id", fetchuser, async (req, res) => {
   try {
-    const { name, subcategories = [] } = req.body;
+    const { name, subcategories = [], bannerImage } = req.body;
     
     // Validation
     if (!name) {
@@ -1413,7 +1451,7 @@ app.put("/admin/categories/:id", fetchuser, async (req, res) => {
     
     const category = await Category.findOneAndUpdate(
       { id: parseInt(req.params.id) },
-      { name, subcategories: processedSubcategories },
+      { name, subcategories: processedSubcategories, bannerImage: bannerImage !== undefined ? bannerImage : undefined },
       { new: true }
     );
     
