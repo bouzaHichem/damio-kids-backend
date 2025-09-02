@@ -448,6 +448,75 @@ router.get('/deliveryrates', asyncHandler(async (req, res) => {
   res.json({ success: true, rates, data: rates });
 }));
 
+// Create or upsert a delivery rate (admin)
+router.post('/deliveryrates', asyncHandler(async (req, res) => {
+  const DeliveryFee = getDeliveryFeeModel();
+  if (!DeliveryFee) {
+    return res.status(503).json({ success: false, error: 'DeliveryFee model not available' });
+  }
+
+  const { wilaya, commune, deliveryType, fee } = req.body || {};
+  if (!wilaya || !commune || !deliveryType || fee === undefined) {
+    return res.status(400).json({ success: false, message: 'wilaya, commune, deliveryType and fee are required' });
+  }
+
+  const numericFee = Number(fee);
+  if (Number.isNaN(numericFee) || numericFee < 0) {
+    return res.status(400).json({ success: false, message: 'fee must be a non-negative number' });
+  }
+
+  const existing = await DeliveryFee.findOne({ wilaya, commune, deliveryType });
+  if (existing) {
+    existing.fee = numericFee;
+    await existing.save();
+    return res.json({ success: true, rate: existing });
+  }
+  const rate = new DeliveryFee({ wilaya, commune, deliveryType, fee: numericFee });
+  await rate.save();
+  res.status(201).json({ success: true, rate });
+}));
+
+// Update a delivery rate by id (admin)
+router.put('/deliveryrates/:id', asyncHandler(async (req, res) => {
+  const DeliveryFee = getDeliveryFeeModel();
+  if (!DeliveryFee) {
+    return res.status(503).json({ success: false, error: 'DeliveryFee model not available' });
+  }
+
+  const { fee, wilaya, commune, deliveryType } = req.body || {};
+
+  const update = {};
+  if (fee !== undefined) {
+    const numericFee = Number(fee);
+    if (Number.isNaN(numericFee) || numericFee < 0) {
+      return res.status(400).json({ success: false, message: 'fee must be a non-negative number' });
+    }
+    update.fee = numericFee;
+  }
+  if (wilaya !== undefined) update.wilaya = wilaya;
+  if (commune !== undefined) update.commune = commune;
+  if (deliveryType !== undefined) update.deliveryType = deliveryType;
+
+  const rate = await DeliveryFee.findByIdAndUpdate(req.params.id, update, { new: true });
+  if (!rate) {
+    return res.status(404).json({ success: false, message: 'Delivery rate not found' });
+  }
+  res.json({ success: true, rate });
+}));
+
+// Delete a delivery rate by id (admin)
+router.delete('/deliveryrates/:id', asyncHandler(async (req, res) => {
+  const DeliveryFee = getDeliveryFeeModel();
+  if (!DeliveryFee) {
+    return res.status(503).json({ success: false, error: 'DeliveryFee model not available' });
+  }
+  const result = await DeliveryFee.findByIdAndDelete(req.params.id);
+  if (!result) {
+    return res.status(404).json({ success: false, message: 'Delivery rate not found' });
+  }
+  res.json({ success: true, message: 'Delivery rate deleted' });
+}));
+
 // Shop images list (admin)
 router.get('/shop-images', asyncHandler(async (req, res) => {
   const ShopImage = getShopImageModel();

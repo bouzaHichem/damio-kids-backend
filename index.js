@@ -1224,6 +1224,17 @@ app.post("/deliveryfee", async (req, res) => {
   }
 });
 
+// Alias for admin frontend compatibility
+app.post("/api/admin/shippingRates", async (req, res) => {
+  const { wilaya, commune, deliveryType } = req.body;
+  const rate = await DeliveryFee.findOne({ wilaya, commune, deliveryType });
+  if (rate) {
+    res.json({ success: true, fee: rate.fee });
+  } else {
+    res.json({ success: false, message: "Delivery not available for this location" });
+  }
+});
+
 // Category Management API
 // Public endpoint to get all categories (for frontend dropdown and navigation)
 app.get("/categories", async (req, res) => {
