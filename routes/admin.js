@@ -57,6 +57,14 @@ const getShopImageModel = () => {
   }
 };
 
+const getCategoryModel = () => {
+  try {
+    return mongoose.model('Category');
+  } catch {
+    return null;
+  }
+};
+
 // Simple async handler
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
@@ -127,10 +135,11 @@ router.get('/orders/recent', asyncHandler(async (req, res) => {
 router.get('/products', asyncHandler(async (req, res) => {
   try {
     const Product = getProductModel();
-    if (!Product) {
+    const Category = getCategoryModel();
+    if (!Product || !Category) {
       return res.status(503).json({
         success: false,
-        error: 'Product model not available'
+        error: 'Product or Category model not available'
       });
     }
     
@@ -138,13 +147,52 @@ router.get('/products', asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
     
-    const products = await Product.find({})
-      .skip(skip)
-      .limit(limit)
-      .sort({ date: -1 })
-      .lean();
-    
-    const total = await Product.countDocuments({});
+    const [productsRaw, total, categories] = await Promise.all([
+      Product.find({})
+        .skip(skip)
+        .limit(limit)
+        .sort({ date: -1 })
+        .lean(),
+      Product.countDocuments({}),
+      Category.find({}).lean()
+    ]);
+
+    // Attach category/subcategory names for display (categoryName, subcategoryName)
+    const products = productsRaw.map(p => {
+      let cat = null;
+      if (p.categoryId) {
+        cat = categories.find(c => c._id.toString() === p.categoryId.toString());
+      }
+      if (!cat && p.category && /^[0-9a-fA-F]{24}$/.test(p.category)) {
+        cat = categories.find(c => c._id.toString() === p.category);
+        if (cat) p.categoryId = cat._id;
+      }
+      if (!cat && p.category) {
+        cat = categories.find(c => c.name === p.category);
+        if (cat) p.categoryId = cat._id;
+      }
+      p.categoryName = cat ? cat.name : (p.category || null);
+
+      // Resolve subcategory
+      let subId = p.subcategoryId;
+      if (!subId && typeof p.subcategory === 'string' && /^\d+$/.test(p.subcategory)) {
+        subId = parseInt(p.subcategory, 10);
+      }
+      if (cat && subId != null) {
+        const sub = (cat.subcategories || []).find(s => s.id === Number(subId) || s.name === p.subcategory);
+        if (sub) {
+          p.subcategoryId = sub.id;
+          p.subcategoryName = sub.name;
+        }
+      } else if (cat && p.subcategory && !/^\d+$/.test(p.subcategory)) {
+        const sub = (cat.subcategories || []).find(s => s.name === p.subcategory);
+        if (sub) {
+          p.subcategoryId = sub.id;
+          p.subcategoryName = sub.name;
+        }
+      }
+      return p;
+    });
     
     res.json({
       success: true,

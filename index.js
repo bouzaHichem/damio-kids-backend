@@ -370,8 +370,11 @@ const Product = mongoose.model("Product", {
   description: String,
   image: String,
   images: [String], // Multiple images support
-  category: String,
-  subcategory: String, // store subcategory id or name
+  // Category linkage
+  category: String, // legacy: category name or Category _id as string
+  subcategory: String, // legacy: subcategory name or numeric id as string
+  categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null }, // new canonical ref
+  subcategoryId: { type: Number, default: null }, // id within Category.subcategories
   new_price: Number,
   old_price: Number,
   // Product variants
@@ -783,27 +786,50 @@ app.get("/allproducts", async (req, res) => {
     const products = await Product.find({});
     const categories = await Category.find({});
     
-    // Enhance products with resolved category information
+    // Enhance products with resolved category and subcategory information
     const enhancedProducts = products.map(product => {
-      const productObj = product.toObject();
-      
-      // If category is an ObjectId, try to resolve it to category name
-      if (productObj.category && productObj.category.match(/^[0-9a-fA-F]{24}$/)) {
-        const matchingCategory = categories.find(cat => cat._id.toString() === productObj.category);
-        if (matchingCategory) {
-          productObj.categoryName = matchingCategory.name;
-          productObj.categoryId = matchingCategory._id;
+      const p = product.toObject();
+
+      // Prefer canonical refs when present
+      let catDoc = null;
+      if (p.categoryId) {
+        catDoc = categories.find(c => c._id.toString() === p.categoryId.toString());
+      }
+
+      // Legacy: category as ObjectId string stored in category
+      if (!catDoc && p.category && /^[0-9a-fA-F]{24}$/.test(p.category)) {
+        catDoc = categories.find(c => c._id.toString() === p.category);
+        if (catDoc) p.categoryId = catDoc._id;
+      }
+
+      // Legacy: category as name
+      if (!catDoc && p.category) {
+        catDoc = categories.find(c => c.name === p.category);
+        if (catDoc) p.categoryId = catDoc._id;
+      }
+
+      p.categoryName = catDoc ? catDoc.name : (p.category || null);
+
+      // Resolve subcategory
+      let subId = p.subcategoryId;
+      if (!subId && typeof p.subcategory === 'string' && /^\d+$/.test(p.subcategory)) {
+        subId = parseInt(p.subcategory, 10);
+      }
+      if (catDoc && subId != null) {
+        const sub = (catDoc.subcategories || []).find(s => s.id === Number(subId) || s.name === p.subcategory);
+        if (sub) {
+          p.subcategoryId = sub.id;
+          p.subcategoryName = sub.name;
         }
-      } else {
-        // Category is already a name, keep it as is
-        productObj.categoryName = productObj.category;
-        const matchingCategory = categories.find(cat => cat.name === productObj.category);
-        if (matchingCategory) {
-          productObj.categoryId = matchingCategory._id;
+      } else if (catDoc && p.subcategory && !/^\d+$/.test(p.subcategory)) {
+        const sub = (catDoc.subcategories || []).find(s => s.name === p.subcategory);
+        if (sub) {
+          p.subcategoryId = sub.id;
+          p.subcategoryName = sub.name;
         }
       }
-      
-      return productObj;
+
+      return p;
     });
     
     res.send(enhancedProducts);
@@ -819,6 +845,9 @@ app.get("/products/search", async (req, res) => {
     const {
       q: searchQuery,
       category,
+      categoryId,
+      subcategory,
+      subcategoryId,
       minPrice,
       maxPrice,
       sizes,
@@ -835,6 +864,20 @@ app.get("/products/search", async (req, res) => {
     // Build MongoDB query
     let query = { status: 'active' };
 
+    // Category/subcategory filtering
+    if (categoryId && /^[0-9a-fA-F]{24}$/.test(categoryId)) {
+      query.categoryId = new mongoose.Types.ObjectId(categoryId);
+    } else if (category && category !== 'all') {
+      // Legacy name-based category
+      query.category = new RegExp(category, 'i');
+    }
+    if (subcategoryId && String(subcategoryId).match(/^\d+$/)) {
+      query.subcategoryId = parseInt(subcategoryId, 10);
+    } else if (subcategory) {
+      // Legacy name-based subcategory
+      query.subcategory = new RegExp(subcategory, 'i');
+    }
+
     // Text search across multiple fields
     if (searchQuery) {
       const searchRegex = new RegExp(searchQuery, 'i');
@@ -845,11 +888,6 @@ app.get("/products/search", async (req, res) => {
         { tags: { $in: [searchRegex] } },
         { category: searchRegex }
       ];
-    }
-
-    // Category filter
-    if (category && category !== 'all') {
-      query.category = new RegExp(category, 'i');
     }
 
     // Price range filter
