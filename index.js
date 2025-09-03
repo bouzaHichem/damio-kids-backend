@@ -871,11 +871,27 @@ app.get("/products/search", async (req, res) => {
       // Legacy name-based category
       query.category = new RegExp(category, 'i');
     }
+
+    // Build subcategory filter to support both id and legacy name
+    const subOr = [];
     if (subcategoryId && String(subcategoryId).match(/^\d+$/)) {
-      query.subcategoryId = parseInt(subcategoryId, 10);
-    } else if (subcategory) {
-      // Legacy name-based subcategory
-      query.subcategory = new RegExp(subcategory, 'i');
+      subOr.push({ subcategoryId: parseInt(subcategoryId, 10) });
+    }
+    if (subcategory) {
+      subOr.push({ subcategory: new RegExp(subcategory, 'i') });
+    }
+    if (subOr.length > 0) {
+      // Merge with existing query conditions
+      if (query.$or) {
+        // If a text $or exists, combine using $and
+        const existingOr = query.$or;
+        delete query.$or;
+        query.$and = [ { ...query }, { $or: existingOr }, { $or: subOr } ];
+        // After wrapping, remove duplicated plain fields from first element
+        delete query.$and[0].$and; // safety
+      } else {
+        query.$or = subOr;
+      }
     }
 
     // Text search across multiple fields
