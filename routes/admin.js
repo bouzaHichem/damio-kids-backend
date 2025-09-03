@@ -389,8 +389,8 @@ router.get('/customers', asyncHandler(async (req, res) => {
   });
 }));
 
-// Inventory summary
-router.get('/inventory', asyncHandler(async (req, res) => {
+// Inventory summary - shared handler
+const getInventorySummary = async (req, res) => {
   const Product = getProductModel();
   if (!Product) {
     return res.status(503).json({ success: false, error: 'Product model not available' });
@@ -428,7 +428,13 @@ router.get('/inventory', asyncHandler(async (req, res) => {
       lowStockProducts
     }
   });
-}));
+};
+
+// Primary route
+router.get('/inventory', asyncHandler(getInventorySummary));
+// Backward-compatibility aliases for legacy admin UIs
+router.get('/inventory/report', asyncHandler(getInventorySummary));
+router.get('/inventory/report2', asyncHandler(getInventorySummary));
 
 // Delivery rates list (admin)
 router.get('/deliveryrates', asyncHandler(async (req, res) => {
