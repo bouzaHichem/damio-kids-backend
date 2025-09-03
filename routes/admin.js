@@ -210,7 +210,7 @@ router.get('/users', asyncHandler(async (req, res) => {
   }
 }));
 
-// Update product
+// Update product (supports both numeric product.id and Mongo _id)
 router.put('/products/:id', asyncHandler(async (req, res) => {
   try {
     const Product = getProductModel();
@@ -223,12 +223,23 @@ router.put('/products/:id', asyncHandler(async (req, res) => {
     
     const productId = req.params.id;
     const updateData = req.body;
-    
-    const product = await Product.findOneAndUpdate(
-      { id: productId },
-      updateData,
-      { new: true }
-    );
+
+    // Decide whether :id refers to our numeric "id" field or Mongo _id
+    let product;
+    if (/^[0-9]+$/.test(productId)) {
+      // Numeric product.id
+      product = await Product.findOneAndUpdate(
+        { id: parseInt(productId, 10) },
+        updateData,
+        { new: true }
+      );
+    } else if (/^[0-9a-fA-F]{24}$/.test(productId)) {
+      // Mongo ObjectId
+      product = await Product.findByIdAndUpdate(productId, updateData, { new: true });
+    } else {
+      // Fallback to try by "id" string match
+      product = await Product.findOneAndUpdate({ id: productId }, updateData, { new: true });
+    }
     
     if (!product) {
       return res.status(404).json({
