@@ -364,52 +364,65 @@ const fetchuser = async (req, res, next) => {
 // Import the proper User model
 const Users = require('./models/User');
 
-const Product = mongoose.model("Product", {
+// Define Product schema explicitly to support indexes and new homepage flags
+const productSchemaLite = new mongoose.Schema({
   id: Number,
   name: String,
   description: String,
   image: String,
-  images: [String], // Multiple images support
+  images: [String],
   // Category linkage
-  category: String, // legacy: category name or Category _id as string
-  subcategory: String, // legacy: subcategory name or numeric id as string
-  categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null }, // new canonical ref
-  subcategoryId: { type: Number, default: null }, // id within Category.subcategories
+  category: String,
+  subcategory: String,
+  categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null },
+  subcategoryId: { type: Number, default: null },
   new_price: Number,
   old_price: Number,
   // Product variants
-  sizes: [String], // e.g., ["XS", "S", "M", "L", "XL"]
-  colors: [String], // e.g., ["Red", "Blue", "Green"]
+  sizes: [String],
+  colors: [String],
   ageRange: {
-    min: Number, // minimum age in months
-    max: Number  // maximum age in months
+    min: Number,
+    max: Number
   },
   // Additional professional fields
   brand: String,
   material: String,
   care_instructions: String,
-  weight: Number, // in grams
+  weight: Number,
   dimensions: {
-    length: Number, // in cm
-    width: Number,  // in cm
-    height: Number  // in cm
+    length: Number,
+    width: Number,
+    height: Number
   },
   stock_quantity: { type: Number, default: 0 },
-  sku: String, // Stock Keeping Unit
-  tags: [String], // for search and filtering
+  sku: String,
+  tags: [String],
   // SEO fields
   meta_title: String,
   meta_description: String,
   // Product status
   status: { type: String, enum: ['active', 'inactive', 'out_of_stock'], default: 'active' },
-  featured: { type: Boolean, default: false },
-  on_sale: { type: Boolean, default: false },
+  featured: { type: Boolean, default: false }, // legacy
+  on_sale: { type: Boolean, default: false },  // legacy
+  // New homepage flags
+  isFeatured: { type: Boolean, default: false, index: true },
+  isPromo: { type: Boolean, default: false, index: true },
+  isBestSelling: { type: Boolean, default: false, index: true },
   // Collection flags
   newCollection: { type: Boolean, default: false },
   popular: { type: Boolean, default: false },
   date: { type: Date, default: Date.now },
   avilable: { type: Boolean, default: true }
-});
+}, { timestamps: true });
+
+productSchemaLite.index({ featured: 1 });
+productSchemaLite.index({ newCollection: 1 });
+productSchemaLite.index({ popular: 1 });
+productSchemaLite.index({ new_price: 1 });
+productSchemaLite.index({ date: -1 });
+
+const Product = mongoose.model('Product', productSchemaLite);
 
 const Order = mongoose.model("Order", {
   userId: String,
@@ -832,11 +845,54 @@ app.get("/allproducts", async (req, res) => {
       return p;
     });
     
-    res.send(enhancedProducts);
+res.send(enhancedProducts);
   } catch (error) {
     console.error('Error fetching products:', error);
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Homepage sections: featured, promo, best-selling (paginated)
+app.get('/api/products/featured', async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const skip = (page - 1) * limit;
+    const filter = { status: 'active', avilable: true, $or: [{ isFeatured: true }, { featured: true }] };
+    const [items, total] = await Promise.all([
+      Product.find(filter).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Product.countDocuments(filter)
+    ]);
+    res.json({ success: true, products: items, page, limit, total, hasMore: skip + items.length < total });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/products/promo', async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const skip = (page - 1) * limit;
+    const filter = { status: 'active', avilable: true, $or: [{ isPromo: true }, { on_sale: true }] };
+    const [items, total] = await Promise.all([
+      Product.find(filter).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Product.countDocuments(filter)
+    ]);
+    res.json({ success: true, products: items, page, limit, total, hasMore: skip + items.length < total });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/products/best-selling', async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const skip = (page - 1) * limit;
+    const filter = { status: 'active', avilable: true, isBestSelling: true };
+    const [items, total] = await Promise.all([
+      Product.find(filter).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Product.countDocuments(filter)
+    ]);
+    res.json({ success: true, products: items, page, limit, total, hasMore: skip + items.length < total });
+  } catch (err) { next(err); }
 });
 
 // Advanced Products Search and Filter API
