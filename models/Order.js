@@ -155,6 +155,15 @@ const orderSchema = new mongoose.Schema({
     default: 'home',
     required: true
   },
+  financials: {
+    orderDiscount: { type: Number, default: 0 },
+    taxAmount: { type: Number, default: 0 },
+    shippingFee: { type: Number, default: 0 },
+    refundedAmount: { type: Number, default: 0 },
+    includeTaxInRevenue: { type: Boolean, default: false }
+  },
+  realizedRevenue: { type: Number, default: 0 },
+  revenueCounted: { type: Boolean, default: false },
   paymentMethod: {
     type: String,
     enum: {

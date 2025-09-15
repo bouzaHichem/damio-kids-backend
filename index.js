@@ -1199,8 +1199,72 @@ app.post("/placeorder", async (req, res) => {
     address
   });
   await order.save();
+  // increment totalOrders metric
+  try {
+    const Metrics = require('./models/Metrics');
+    const m = await getOrInitMetrics();
+    m.totalOrders = Number(m.totalOrders || 0) + 1;
+    m.updatedAt = new Date();
+    await m.save();
+    broadcastMetrics(m);
+  } catch(e) { console.warn('Metrics update failed (placeorder):', e?.message); }
   res.json({ success: true, order });
 });
+
+// ===== Metrics (SSE) =====
+const sseClients = new Set();
+
+function broadcastMetrics(metricsDoc){
+  if (!metricsDoc) return;
+  const payload = `event: metrics\ndata: ${JSON.stringify({
+    totalRevenue: Number(metricsDoc.totalRevenue || 0),
+    totalOrders: Number(metricsDoc.totalOrders || 0),
+    updatedAt: metricsDoc.updatedAt
+  })}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(payload); } catch {}
+  }
+}
+
+async function getOrInitMetrics(){
+  const Metrics = require('./models/Metrics');
+  let m = await Metrics.findById('global');
+  if (!m) m = await Metrics.create({ _id: 'global', totalRevenue: 0, totalOrders: 0 });
+  return m;
+}
+
+app.get('/api/admin/metrics', requireAdminAuth, async (req, res) => {
+  const Metrics = require('./models/Metrics');
+  const m = await getOrInitMetrics();
+  res.json({ success: true, data: { totalRevenue: m.totalRevenue || 0, totalOrders: m.totalOrders || 0, updatedAt: m.updatedAt } });
+});
+
+app.get('/api/admin/metrics/stream', requireAdminAuth, async (req, res) => {
+  res.set({ 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream', 'Connection': 'keep-alive' });
+  res.flushHeaders && res.flushHeaders();
+  res.write(`event: ping\ndata: {"ok":true}\n\n`);
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
+});
+
+function computeOrderRevenue(order, { includeTax = (order.financials?.includeTaxInRevenue || false), includeShipping = false } = {}){
+  const items = order.items || [];
+  const sumItems = items.reduce((acc, it) => {
+    const price = Number(it.price || 0);
+    const qty = Number(it.quantity || 0);
+    const itemDisc = Number(it.itemDiscount || 0);
+    return acc + Math.max(price - itemDisc, 0) * qty;
+  }, 0);
+  const orderDiscount = Number(order.financials?.orderDiscount || 0);
+  const taxAmount = Number(order.financials?.taxAmount || 0);
+  const shippingFee = Number(order.financials?.shippingFee || 0);
+  const refunded = Number(order.financials?.refundedAmount || 0);
+  let revenue = Math.max(sumItems - orderDiscount, 0);
+  if (includeTax) revenue += taxAmount;
+  if (includeShipping) revenue += shippingFee;
+  revenue = Math.max(revenue - refunded, 0);
+  return revenue;
+}
 
 // Admin Orders (optional: protect with fetchuser if needed)
 app.get("/admin/orders", fetchuser, async (req, res) => {
@@ -1209,9 +1273,64 @@ app.get("/admin/orders", fetchuser, async (req, res) => {
 });
 
 app.post("/admin/updateorder", fetchuser, async (req, res) => {
-  const { orderId, status } = req.body;
-  await Order.findByIdAndUpdate(orderId, { status });
-  res.json({ success: true });
+  const { orderId, status, financialsUpdate } = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const order = await Order.findById(orderId).session(session);
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    const prevStatus = order.status;
+
+    if (financialsUpdate && typeof financialsUpdate === 'object') {
+      order.financials = { ...(order.financials || {}), ...financialsUpdate };
+    }
+
+    order.status = status;
+
+    const Metrics = require('./models/Metrics');
+    const m = await getOrInitMetrics();
+
+    // rollback if leaving delivered
+    if (prevStatus?.toLowerCase() === 'delivered' && status?.toLowerCase() !== 'delivered' && order.revenueCounted) {
+      m.totalRevenue = Number(m.totalRevenue || 0) - Number(order.realizedRevenue || 0);
+      order.revenueCounted = false;
+      m.updatedAt = new Date();
+      await m.save({ session });
+    }
+
+    // handle delivered
+    if (status?.toLowerCase() === 'delivered') {
+      const newRevenue = computeOrderRevenue(order, { includeTax: order.financials?.includeTaxInRevenue });
+      if (!order.revenueCounted) {
+        m.totalRevenue = Number(m.totalRevenue || 0) + newRevenue;
+        order.realizedRevenue = newRevenue;
+        order.revenueCounted = true;
+        m.updatedAt = new Date();
+        await m.save({ session });
+      } else if (Number(order.realizedRevenue || 0) !== newRevenue) {
+        const delta = newRevenue - Number(order.realizedRevenue || 0);
+        m.totalRevenue = Number(m.totalRevenue || 0) + delta;
+        order.realizedRevenue = newRevenue;
+        m.updatedAt = new Date();
+        await m.save({ session });
+      }
+    }
+
+    await order.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+
+    // broadcast after commit
+    const fresh = await getOrInitMetrics();
+    broadcastMetrics(fresh);
+
+    res.json({ success: true });
+  } catch (e) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error('updateorder metrics error', e);
+    res.status(500).json({ success: false, message: 'Update failed' });
+  }
 });
 
 // Delivery Fee Management API
