@@ -2772,14 +2772,21 @@ app.get('/api/admin/analytics/sales-trends', requireAdminAuth, async (req, res) 
     const startDate = new Date(req.query.startDate || Date.now() - 30 * 24 * 60 * 60 * 1000);
     const endDate = new Date(req.query.endDate || Date.now());
 
-    // Use realizedRevenue (counted only when delivered).
+    // Group by day and include delivered revenue. For orders that predate the
+    // realizedRevenue field, fall back to total when status is delivered.
     const series = await Order.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+      { $project: {
+          dateKey: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          isDelivered: { $eq: [ { $toLower: '$status' }, 'delivered' ] },
+          realized: { $ifNull: ['$realizedRevenue', 0] },
+          total: { $ifNull: ['$total', 0] }
+        }
+      },
+      { $group: {
+          _id: '$dateKey',
           orders: { $sum: 1 },
-          revenue: { $sum: { $ifNull: ['$realizedRevenue', 0] } }
+          revenue: { $sum: { $cond: [ '$isDelivered', { $cond: [ { $gt: ['$realized', 0] }, '$realized', '$total' ] }, 0 ] } }
         }
       },
       { $sort: { _id: 1 } }
