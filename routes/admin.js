@@ -632,12 +632,91 @@ router.post('/updateorder', asyncHandler(async (req, res) => {
   if (!Order) {
     return res.status(503).json({ success: false, error: 'Order model not available' });
   }
-  const { orderId, status } = req.body;
+  const { orderId, status, financialsUpdate } = req.body;
   if (!orderId || !status) {
     return res.status(400).json({ success: false, error: 'orderId and status are required' });
   }
-  await Order.findByIdAndUpdate(orderId, { status });
-  res.json({ success: true });
+
+  // Load helpers from main app scope
+  const mongoose = require('mongoose');
+  const Metrics = require('../models/Metrics');
+
+  // local compute function mirrors index.js
+  const computeOrderRevenue = (order, { includeTax = (order.financials?.includeTaxInRevenue || false), includeShipping = false } = {}) => {
+    const items = order.items || [];
+    const sumItems = items.reduce((acc, it) => {
+      const price = Number(it.price || 0);
+      const qty = Number(it.quantity || 0);
+      const itemDisc = Number(it.itemDiscount || 0);
+      return acc + Math.max(price - itemDisc, 0) * qty;
+    }, 0);
+    const orderDiscount = Number(order.financials?.orderDiscount || 0);
+    const taxAmount = Number(order.financials?.taxAmount || 0);
+    const shippingFee = Number(order.financials?.shippingFee || 0);
+    const refunded = Number(order.financials?.refundedAmount || 0);
+    let revenue = Math.max(sumItems - orderDiscount, 0);
+    if (includeTax) revenue += taxAmount;
+    if (includeShipping) revenue += shippingFee;
+    revenue = Math.max(revenue - refunded, 0);
+    return revenue;
+  };
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const order = await Order.findById(orderId).session(session);
+    if (!order) return res.status(404).json({ success: false, error: 'Order not found' });
+    const prevStatus = order.status;
+
+    if (financialsUpdate && typeof financialsUpdate === 'object') {
+      order.financials = { ...(order.financials || {}), ...financialsUpdate };
+    }
+
+    order.status = status;
+
+    let m = await Metrics.findById('global').session(session);
+    if (!m) m = await Metrics.create([{ _id: 'global', totalRevenue: 0, totalOrders: 0 }], { session }).then(([d])=>d);
+
+    if (prevStatus?.toLowerCase() === 'delivered' && status?.toLowerCase() !== 'delivered' && order.revenueCounted) {
+      m.totalRevenue = Number(m.totalRevenue || 0) - Number(order.realizedRevenue || 0);
+      order.revenueCounted = false;
+      m.updatedAt = new Date();
+      await m.save({ session });
+    }
+
+    if (status?.toLowerCase() === 'delivered') {
+      const newRevenue = computeOrderRevenue(order, { includeTax: order.financials?.includeTaxInRevenue });
+      if (!order.revenueCounted) {
+        m.totalRevenue = Number(m.totalRevenue || 0) + newRevenue;
+        order.realizedRevenue = newRevenue;
+        order.revenueCounted = true;
+        m.updatedAt = new Date();
+        await m.save({ session });
+      } else if (Number(order.realizedRevenue || 0) !== newRevenue) {
+        const delta = newRevenue - Number(order.realizedRevenue || 0);
+        m.totalRevenue = Number(m.totalRevenue || 0) + delta;
+        order.realizedRevenue = newRevenue;
+        m.updatedAt = new Date();
+        await m.save({ session });
+      }
+    }
+
+    await order.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+
+    // Fire-and-forget: fetch latest and broadcast via global function if present
+    try {
+      const app = require('..'); // exported express app in index.js (for serverless compatibility)
+    } catch {}
+
+    res.json({ success: true });
+  } catch (e) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error('admin routes updateorder error', e);
+    res.status(500).json({ success: false, error: 'Update failed' });
+  }
 }));
 
 module.exports = router;

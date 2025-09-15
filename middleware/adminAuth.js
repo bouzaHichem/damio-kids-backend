@@ -28,6 +28,12 @@ const requireAdminAuth = async (req, res, next) => {
       token = req.cookies.adminToken;
       console.log('✅ Admin token found in cookies');
     }
+
+    // 4. Fallback to query param (for EventSource which cannot set headers)
+    if (!token && req.query && req.query.token) {
+      token = String(req.query.token);
+      console.log('✅ Admin token found in query parameter');
+    }
     
     if (!token) {
       console.log('❌ No admin token provided in request');
