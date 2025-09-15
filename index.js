@@ -2768,19 +2768,18 @@ app.post('/api/admin/email/resend/:id', requireAdminAuth, (req, res) => {
 // Analytics aliases expected by the admin UI
 app.get('/api/admin/analytics/sales-trends', requireAdminAuth, async (req, res) => {
   try {
-    // Reuse the same logic as /api/admin/sales-trends via inline aggregation
     const Order = mongoose.model('Order');
-    const period = (req.query.period || 'daily').toLowerCase();
     const startDate = new Date(req.query.startDate || Date.now() - 30 * 24 * 60 * 60 * 1000);
     const endDate = new Date(req.query.endDate || Date.now());
 
+    // Use realizedRevenue (counted only when delivered).
     const series = await Order.aggregate([
       { $match: { date: { $gte: startDate, $lte: endDate } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
           orders: { $sum: 1 },
-          revenue: { $sum: { $ifNull: ['$total', 0] } }
+          revenue: { $sum: { $ifNull: ['$realizedRevenue', 0] } }
         }
       },
       { $sort: { _id: 1 } }
@@ -2825,6 +2824,70 @@ app.use('*', (req, res) => {
       public: 'GET /categories, GET /wilayas'
     }
   });
+});
+
+// Metrics rebuild (admin-only)
+app.post('/api/admin/metrics/rebuild', requireAdminAuth, async (req, res) => {
+  try {
+    const Order = mongoose.model('Order');
+    const Metrics = require('./models/Metrics');
+    const agg = await Order.aggregate([
+      { $match: { revenueCounted: true } },
+      { $group: { _id: null, totalRevenue: { $sum: { $ifNull: ['$realizedRevenue', 0] } } } }
+    ]);
+    const totalRevenue = agg?.[0]?.totalRevenue || 0;
+    const totalOrders = await Order.countDocuments({});
+    const m = await Metrics.findByIdAndUpdate('global', { $set: { totalRevenue, totalOrders, updatedAt: new Date() } }, { upsert: true, new: true });
+    broadcastMetrics(m);
+    res.json({ success: true, data: { totalRevenue: m.totalRevenue, totalOrders: m.totalOrders, updatedAt: m.updatedAt } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Rebuild failed', error: e.message });
+  }
+});
+
+// Refund endpoint
+app.post('/api/admin/orders/refund', requireAdminAuth, async (req, res) => {
+  const { orderId, amount } = req.body;
+  if (!orderId || isNaN(Number(amount))) return res.status(400).json({ success: false, message: 'orderId and numeric amount required' });
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const Order = mongoose.model('Order');
+    const Metrics = require('./models/Metrics');
+    const order = await Order.findById(orderId).session(session);
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    order.financials = order.financials || {};
+    order.financials.refundedAmount = Number(order.financials.refundedAmount || 0) + Number(amount);
+
+    let mChanged = false;
+    let m = await Metrics.findById('global').session(session);
+    if (!m) m = await Metrics.create([{ _id: 'global', totalRevenue: 0, totalOrders: 0 }], { session }).then(([d])=>d);
+
+    if (order.status?.toLowerCase() === 'delivered' && order.revenueCounted) {
+      const newRevenue = computeOrderRevenue(order, { includeTax: order.financials?.includeTaxInRevenue });
+      const delta = newRevenue - Number(order.realizedRevenue || 0);
+      m.totalRevenue = Number(m.totalRevenue || 0) + delta;
+      order.realizedRevenue = newRevenue;
+      m.updatedAt = new Date();
+      await m.save({ session });
+      mChanged = true;
+    }
+
+    await order.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+
+    if (mChanged) {
+      const fresh = await getOrInitMetrics();
+      broadcastMetrics(fresh);
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    await session.abortTransaction();
+    session.endSession();
+    res.status(500).json({ success: false, message: 'Refund failed', error: e.message });
+  }
 });
 
 // For Vercel serverless functions, export the app instead of listening
