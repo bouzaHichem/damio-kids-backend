@@ -638,18 +638,26 @@ router.get('/orders', asyncHandler(async (req, res) => {
     return round2(items.reduce((sum, it) => sum + toNumber(it.price) * toNumber(it.quantity), 0));
   };
 
-  const computeDeliveryFee = (o) => {
-    return round2(
+  const computeDeliveryFee = (o, rate, productsTotal) => {
+    // Prefer explicit fee fields on order; otherwise compute from rate
+    const explicit = (
       o?.deliveryFee ??
       o?.financials?.shippingFee ??
-      o?.delivery?.fee ??
-      0
+      o?.delivery?.fee
     );
+    if (explicit != null) return round2(explicit);
+
+    if (rate) {
+      const threshold = toNumber(rate.freeDeliveryThreshold || 0);
+      if (threshold > 0 && toNumber(productsTotal) >= threshold) return 0;
+      return round2(rate.fee);
+    }
+    return 0;
   };
 
-  const computeTotals = (o) => {
+  const computeTotals = (o, rate) => {
     const productsTotal = computeProductsTotal(o);
-    const deliveryFee = computeDeliveryFee(o);
+    const deliveryFee = computeDeliveryFee(o, rate, productsTotal);
     const totalAmount = round2(
       (o && o.total != null ? toNumber(o.total) : (productsTotal + deliveryFee))
     );
@@ -664,10 +672,37 @@ router.get('/orders', asyncHandler(async (req, res) => {
     deliveryType: o?.deliveryType ?? 'home'
   });
 
+  // Load active delivery rates once and map for quick lookup
+  const DeliveryFee = getDeliveryFeeModel();
+  let rateMap = new Map();
+  if (DeliveryFee) {
+    const rates = await DeliveryFee.find({ isActive: true }).lean();
+    for (const r of rates) {
+      const key = `${(r.wilaya||'').toLowerCase()}|${(r.commune||'').toLowerCase()}|${(r.deliveryType||'home').toLowerCase()}`;
+      rateMap.set(key, r);
+    }
+  }
+
   const raw = await Order.find({}).sort({ date: -1 }).lean();
   const orders = (raw || []).map(o => {
-    const { productsTotal, deliveryFee, totalAmount } = computeTotals(o);
     const contact = normalizeContact(o);
+    const key = `${(contact.wilaya||'').toLowerCase()}|${(contact.commune||'').toLowerCase()}|${(contact.deliveryType||'home').toLowerCase()}`;
+    const matchedRate = rateMap.get(key);
+
+    const { productsTotal, deliveryFee, totalAmount } = computeTotals(o, matchedRate);
+
+    const deliveryDetails = matchedRate ? {
+      wilaya: matchedRate.wilaya,
+      commune: matchedRate.commune,
+      deliveryType: matchedRate.deliveryType,
+      fee: matchedRate.fee,
+      originalFee: matchedRate.fee,
+      estimatedDays: matchedRate.estimatedDays,
+      estimatedDeliveryDisplay: matchedRate.estimatedDays ? (matchedRate.estimatedDays.min === matchedRate.estimatedDays.max ? `${matchedRate.estimatedDays.min} day${matchedRate.estimatedDays.min > 1 ? 's' : ''}` : `${matchedRate.estimatedDays.min}-${matchedRate.estimatedDays.max} days`) : null,
+      freeDeliveryThreshold: matchedRate.freeDeliveryThreshold ?? null,
+      hasFreeDelivery: (matchedRate.freeDeliveryThreshold != null && toNumber(productsTotal) >= toNumber(matchedRate.freeDeliveryThreshold)),
+      notes: matchedRate.notes || null,
+    } : null;
 
     return {
       ...o,
@@ -681,6 +716,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
       productsTotal,
       deliveryFee,
       totalAmount,
+      deliveryDetails,
       // keep existing total equal to totalAmount for backward compatibility
       total: totalAmount,
     };
