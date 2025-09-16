@@ -702,6 +702,7 @@ router.get('/orders', asyncHandler(async (req, res) => {
     const { firstName, lastName } = splitName(fullName);
 
     return {
+      addressRaw, // keep raw for parsing fallbacks
       address,
       wilaya,
       commune,
@@ -715,19 +716,106 @@ router.get('/orders', asyncHandler(async (req, res) => {
   // Load active delivery rates once and map for quick lookup
   const DeliveryFee = getDeliveryFeeModel();
   let rateMap = new Map();
+  // Normalization helpers for matching Arabic/Latin text robustly
+  const normalizeName = (s) => String(s || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u064B-\u065F\u0670]/g, '') // Arabic diacritics
+    .replace(/[\u061B\u061F\u060C,.:؛؟]/g, ' ') // Arabic/latin punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Indexes for fuzzy lookup
+  const wilayaByNorm = new Map(); // normName -> canonical name
+  const communesByWilaya = new Map(); // wilayaName -> Set of commune canonical names
+  const communeToWilayas = new Map(); // normCommune -> Set of wilayas containing it
+
   if (DeliveryFee) {
     const rates = await DeliveryFee.find({ isActive: true }).lean();
     for (const r of rates) {
       const key = `${(r.wilaya||'').toLowerCase()}|${(r.commune||'').toLowerCase()}|${(r.deliveryType||'home').toLowerCase()}`;
       rateMap.set(key, r);
+
+      const wCanon = r.wilaya || '';
+      const cCanon = r.commune || '';
+      const wNorm = normalizeName(wCanon);
+      const cNorm = normalizeName(cCanon);
+      if (wNorm) {
+        if (!wilayaByNorm.has(wNorm)) wilayaByNorm.set(wNorm, wCanon);
+      }
+      if (wCanon && cCanon) {
+        if (!communesByWilaya.has(wCanon)) communesByWilaya.set(wCanon, new Set());
+        communesByWilaya.get(wCanon).add(cCanon);
+        if (!communeToWilayas.has(cNorm)) communeToWilayas.set(cNorm, new Set());
+        communeToWilayas.get(cNorm).add(wCanon);
+      }
     }
   }
+
+  // Fallback: try to guess wilaya/commune from free-form address text
+  const guessLocationFromAddress = (addressRaw) => {
+    if (!addressRaw) return { wilaya: null, commune: null };
+    const raw = String(addressRaw);
+    // Split by Arabic or Latin comma/newlines
+    const tokens = raw.split(/[\n\r,\u060C]/).map(t => normalizeName(t)).filter(Boolean);
+    let guessedWilaya = null;
+    let guessedCommune = null;
+
+    // Try from the rightmost tokens (usually end contains location)
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      const t = tokens[i];
+      if (!guessedWilaya && wilayaByNorm.has(t)) {
+        guessedWilaya = wilayaByNorm.get(t);
+        // try immediate neighbor for commune
+        if (i - 1 >= 0) {
+          const cTry = tokens[i - 1];
+          if (communeToWilayas.has(cTry) && communeToWilayas.get(cTry).has(guessedWilaya)) {
+            // find canonical commune spelling within that wilaya
+            const possible = communesByWilaya.get(guessedWilaya) || new Set();
+            for (const c of possible) {
+              if (normalizeName(c) === cTry) { guessedCommune = c; break; }
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    // If no wilaya matched, try to match commune first then infer wilaya
+    if (!guessedWilaya) {
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        const t = tokens[i];
+        if (communeToWilayas.has(t)) {
+          const wilayas = Array.from(communeToWilayas.get(t));
+          if (wilayas.length === 1) {
+            guessedWilaya = wilayas[0];
+            // resolve canonical commune name within that wilaya
+            const possible = communesByWilaya.get(guessedWilaya) || new Set();
+            for (const c of possible) {
+              if (normalizeName(c) === t) { guessedCommune = c; break; }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    return { wilaya: guessedWilaya, commune: guessedCommune };
+  };
 
   const raw = await Order.find({}).sort({ date: -1 }).lean();
   const orders = (raw || []).map(o => {
     const contact = normalizeContact(o);
-    const key = `${(contact.wilaya||'').toLowerCase()}|${(contact.commune||'').toLowerCase()}|${(contact.deliveryType||'home').toLowerCase()}`;
-    const matchedRate = rateMap.get(key);
+
+    // If wilaya/commune are missing, try to guess from address
+    if ((!contact.wilaya || !contact.commune) && contact.addressRaw) {
+      const guess = guessLocationFromAddress(contact.addressRaw);
+      contact.wilaya = contact.wilaya || guess.wilaya;
+      contact.commune = contact.commune || guess.commune;
+    }
+
+    let key = `${(contact.wilaya||'').toLowerCase()}|${(contact.commune||'').toLowerCase()}|${(contact.deliveryType||'home').toLowerCase()}`;
+    let matchedRate = rateMap.get(key);
 
     const { productsTotal, deliveryFee, totalAmount } = computeTotals(o, matchedRate);
 
