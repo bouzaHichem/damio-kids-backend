@@ -621,8 +621,71 @@ router.get('/orders', asyncHandler(async (req, res) => {
   if (!Order) {
     return res.status(503).json({ success: false, error: 'Order model not available' });
   }
-  const orders = await Order.find({}).sort({ date: -1 }).lean();
-  // Return plain array for UI compatibility
+
+  const toNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const round2 = (n) => Math.round(toNumber(n) * 100) / 100;
+
+  const computeProductsTotal = (o) => {
+    const items = Array.isArray(o?.items) ? o.items : [];
+    // Prefer explicit subtotal if present, otherwise price * quantity
+    const fromSubtotals = items.every(it => it && it.subtotal != null);
+    if (fromSubtotals) {
+      return round2(items.reduce((sum, it) => sum + toNumber(it.subtotal), 0));
+    }
+    return round2(items.reduce((sum, it) => sum + toNumber(it.price) * toNumber(it.quantity), 0));
+  };
+
+  const computeDeliveryFee = (o) => {
+    return round2(
+      o?.deliveryFee ??
+      o?.financials?.shippingFee ??
+      o?.delivery?.fee ??
+      0
+    );
+  };
+
+  const computeTotals = (o) => {
+    const productsTotal = computeProductsTotal(o);
+    const deliveryFee = computeDeliveryFee(o);
+    const totalAmount = round2(
+      (o && o.total != null ? toNumber(o.total) : (productsTotal + deliveryFee))
+    );
+    return { productsTotal, deliveryFee, totalAmount };
+  };
+
+  const normalizeContact = (o) => ({
+    address: o?.address ?? o?.shippingAddress?.address ?? null,
+    wilaya: o?.wilaya ?? o?.shippingAddress?.wilaya ?? null,
+    commune: o?.commune ?? o?.shippingAddress?.commune ?? null,
+    phone: o?.phone ?? o?.telephone ?? o?.customerInfo?.phone ?? o?.shippingAddress?.phone ?? null,
+    deliveryType: o?.deliveryType ?? 'home'
+  });
+
+  const raw = await Order.find({}).sort({ date: -1 }).lean();
+  const orders = (raw || []).map(o => {
+    const { productsTotal, deliveryFee, totalAmount } = computeTotals(o);
+    const contact = normalizeContact(o);
+
+    return {
+      ...o,
+      // compatibility fields expected by the admin UI
+      address: contact.address,
+      wilaya: contact.wilaya,
+      commune: contact.commune,
+      phone: contact.phone,
+      deliveryType: contact.deliveryType,
+      // new fields as requested
+      productsTotal,
+      deliveryFee,
+      totalAmount,
+      // keep existing total equal to totalAmount for backward compatibility
+      total: totalAmount,
+    };
+  });
+
   res.json(orders);
 }));
 
