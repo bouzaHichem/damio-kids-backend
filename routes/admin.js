@@ -664,13 +664,53 @@ router.get('/orders', asyncHandler(async (req, res) => {
     return { productsTotal, deliveryFee, totalAmount };
   };
 
-  const normalizeContact = (o) => ({
-    address: o?.address ?? o?.shippingAddress?.address ?? null,
-    wilaya: o?.wilaya ?? o?.shippingAddress?.wilaya ?? null,
-    commune: o?.commune ?? o?.shippingAddress?.commune ?? null,
-    phone: o?.phone ?? o?.telephone ?? o?.customerInfo?.phone ?? o?.shippingAddress?.phone ?? null,
-    deliveryType: o?.deliveryType ?? 'home'
-  });
+  // Helpers to extract structured contact fields from various shapes
+  const splitName = (fullName) => {
+    if (!fullName) return { firstName: null, lastName: null };
+    const parts = String(fullName).trim().split(/\s+/);
+    if (parts.length === 1) return { firstName: parts[0], lastName: null };
+    return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  };
+  const extractPhone = (text) => {
+    if (!text) return null;
+    const str = String(text);
+    // Look for Tel: 0XXXXXXXXX or other digit sequences 8-13 chars
+    const telMatch = str.match(/(?:Tel\s*[:：])\s*([+]?\d[\d\s-]{6,15})/i);
+    if (telMatch) return telMatch[1].replace(/[^\d+]/g, '');
+    const plain = str.match(/((?:\+?213\s*)?[0-9]{8,13})/);
+    return plain ? plain[1].replace(/[^\d+]/g, '') : null;
+  };
+  const cleanAddressString = (text) => {
+    if (!text) return null;
+    let s = String(text);
+    s = s.replace(/(?:Tel\s*[:：]).*?(?=$|\.|\n)/ig, '');
+    s = s.replace(/Notes?\s*[:：].*$/ig, '');
+    return s.trim().replace(/\s{2,}/g, ' ');
+  };
+
+  const normalizeContact = (o) => {
+    const addressRaw = o?.shippingAddress?.address ?? o?.address ?? null;
+    const address = cleanAddressString(addressRaw);
+
+    const phoneFromOrder = o?.phone ?? o?.telephone ?? o?.customerInfo?.phone ?? o?.shippingAddress?.phone;
+    const phone = phoneFromOrder ?? extractPhone(addressRaw);
+
+    const wilaya = o?.wilaya ?? o?.shippingAddress?.wilaya ?? null;
+    const commune = o?.commune ?? o?.shippingAddress?.commune ?? null;
+
+    const fullName = o?.customerInfo?.name ?? o?.shippingAddress?.fullName ?? null;
+    const { firstName, lastName } = splitName(fullName);
+
+    return {
+      address,
+      wilaya,
+      commune,
+      phone,
+      deliveryType: o?.deliveryType ?? 'home',
+      firstName,
+      lastName,
+    };
+  };
 
   // Load active delivery rates once and map for quick lookup
   const DeliveryFee = getDeliveryFeeModel();
@@ -691,6 +731,10 @@ router.get('/orders', asyncHandler(async (req, res) => {
 
     const { productsTotal, deliveryFee, totalAmount } = computeTotals(o, matchedRate);
 
+    // Prefer explicit wilaya/commune on order; otherwise fallback to matched rate
+    const wilaya = contact.wilaya || matchedRate?.wilaya || null;
+    const commune = contact.commune || matchedRate?.commune || null;
+
     const deliveryDetails = matchedRate ? {
       wilaya: matchedRate.wilaya,
       commune: matchedRate.commune,
@@ -707,12 +751,16 @@ router.get('/orders', asyncHandler(async (req, res) => {
     return {
       ...o,
       // compatibility fields expected by the admin UI
+      // contact fields
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      phoneNumber: contact.phone,
       address: contact.address,
-      wilaya: contact.wilaya,
-      commune: contact.commune,
-      phone: contact.phone,
+      wilaya,
+      commune,
+      phone: contact.phone, // keep legacy key too
       deliveryType: contact.deliveryType,
-      // new fields as requested
+      // new computed fields
       productsTotal,
       deliveryFee,
       totalAmount,
