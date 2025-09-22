@@ -1194,6 +1194,18 @@ const DetailedOrder = require('./models/Order');
 const orderNotificationService = require('./services/orderNotificationService');
 const pushNotificationService = require('./services/pushNotificationService');
 const webPushService = require('./services/webPushService');
+// Initialize Web Push on startup (logs whether keys are present)
+try {
+  webPushService.configure();
+  const wpStatus = webPushService.getStatus();
+  if (wpStatus.configured) {
+    console.log('✅ Web Push configured (startup)');
+  } else {
+    console.warn('🟡 Web Push not configured on startup:', wpStatus);
+  }
+} catch (e) {
+  console.warn('🟡 Web Push startup configure error:', e.message);
+}
 
 // ✅ Place Order (Enhanced with detailed model and email notifications)
 app.post("/placeorder", async (req, res) => {
@@ -1632,6 +1644,16 @@ app.post('/api/admin/webpush/test', requireAdminAuth, async (req, res) => {
   try {
     const result = await webPushService.sendTest(req.admin?.id || null);
     res.json({ success: result.success, total: result.total, successful: result.successful });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Quick config status (admin only)
+app.get('/api/admin/webpush/config', requireAdminAuth, async (req, res) => {
+  try {
+    const status = webPushService.getStatus();
+    res.json({ success: true, status });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

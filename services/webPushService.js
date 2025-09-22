@@ -87,4 +87,13 @@ async function sendTest(adminId = null) {
   return { success: success > 0, total: subs.length, successful: success };
 }
 
-module.exports = { configure, subscribe, listSubscriptions, sendOrderNotification, sendTest };
+function getStatus() {
+  return {
+    configured,
+    hasPublicKey: !!process.env.WEBPUSH_VAPID_PUBLIC_KEY,
+    hasPrivateKey: !!process.env.WEBPUSH_VAPID_PRIVATE_KEY,
+    contact: CONTACT
+  };
+}
+
+module.exports = { configure, subscribe, listSubscriptions, sendOrderNotification, sendTest, getStatus };
