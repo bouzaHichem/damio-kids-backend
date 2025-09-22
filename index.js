@@ -1189,26 +1189,161 @@ app.post("/removeproduct", async (req, res) => {
   res.json({ success: true });
 });
 
-// ✅ Place Order (available to all users, logged in or guest)
+// Import Order model and notification services
+const DetailedOrder = require('./models/Order');
+const orderNotificationService = require('./services/orderNotificationService');
+const pushNotificationService = require('./services/pushNotificationService');
+
+// ✅ Place Order (Enhanced with detailed model and email notifications)
 app.post("/placeorder", async (req, res) => {
-  const { items, total, address, userId } = req.body;
-  const order = new Order({
-    userId: userId || "guest",
-    items,
-    total,
-    address
-  });
-  await order.save();
-  // increment totalOrders metric
   try {
-    const Metrics = require('./models/Metrics');
-    const m = await getOrInitMetrics();
-    m.totalOrders = Number(m.totalOrders || 0) + 1;
-    m.updatedAt = new Date();
-    await m.save();
-    broadcastMetrics(m);
-  } catch(e) { console.warn('Metrics update failed (placeorder):', e?.message); }
-  res.json({ success: true, order });
+    console.log('📦 New order placement request:', {
+      userId: req.body.userId || 'guest',
+      itemCount: req.body.items?.length || 0,
+      total: req.body.total
+    });
+
+    // Validate required fields
+    const { 
+      items, 
+      subtotal, 
+      deliveryFee = 0, 
+      total, 
+      customerInfo, 
+      shippingAddress, 
+      deliveryType = 'home',
+      paymentMethod = 'cash_on_delivery',
+      userId 
+    } = req.body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Order must contain at least one item" 
+      });
+    }
+
+    if (!customerInfo || !customerInfo.email || !customerInfo.name || !customerInfo.phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Customer information (name, email, phone) is required" 
+      });
+    }
+
+    if (!shippingAddress || !shippingAddress.fullName || !shippingAddress.address || 
+        !shippingAddress.wilaya || !shippingAddress.commune || !shippingAddress.phone) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Complete shipping address is required" 
+      });
+    }
+
+    if (!total || total <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Valid order total is required" 
+      });
+    }
+
+    // Create order with detailed model
+    const orderData = {
+      userId: userId || "guest",
+      customerInfo: {
+        email: customerInfo.email.toLowerCase().trim(),
+        name: customerInfo.name.trim(),
+        phone: customerInfo.phone.trim()
+      },
+      items: items.map(item => ({
+        productId: item.productId || item.id,
+        name: item.name,
+        image: item.image,
+        price: Number(item.price),
+        quantity: Number(item.quantity),
+        size: item.size || '',
+        color: item.color || '',
+        subtotal: Number(item.subtotal || item.price * item.quantity)
+      })),
+      subtotal: Number(subtotal || items.reduce((sum, item) => sum + (item.subtotal || item.price * item.quantity), 0)),
+      deliveryFee: Number(deliveryFee),
+      total: Number(total),
+      shippingAddress: {
+        fullName: shippingAddress.fullName.trim(),
+        phone: shippingAddress.phone.trim(),
+        wilaya: shippingAddress.wilaya,
+        commune: shippingAddress.commune,
+        address: shippingAddress.address.trim(),
+        postalCode: shippingAddress.postalCode || '',
+        notes: shippingAddress.notes || ''
+      },
+      deliveryType: deliveryType,
+      paymentMethod: paymentMethod,
+      status: 'pending'
+    };
+
+    // Create and save the order
+    const order = new DetailedOrder(orderData);
+    const savedOrder = await order.save();
+    console.log(`✅ Order saved successfully: ${savedOrder.orderNumber}`);
+
+    // Update metrics
+    try {
+      const Metrics = require('./models/Metrics');
+      const m = await getOrInitMetrics();
+      m.totalOrders = Number(m.totalOrders || 0) + 1;
+      m.updatedAt = new Date();
+      await m.save();
+      broadcastMetrics(m);
+      console.log('📊 Metrics updated successfully');
+    } catch(e) { 
+      console.warn('⚠️ Metrics update failed (placeorder):', e?.message); 
+    }
+
+    // Send notifications (async, non-blocking)
+    setImmediate(async () => {
+      try {
+        console.log('📧 Triggering email notifications...');
+        const emailResults = await orderNotificationService.sendNewOrderNotifications(savedOrder);
+        console.log('📧 Email notification results:', {
+          adminSent: emailResults.adminNotification?.success,
+          customerSent: emailResults.customerNotification?.success,
+          errors: emailResults.errors
+        });
+
+        console.log('📱 Triggering push notifications...');
+        const pushResults = await pushNotificationService.sendOrderNotification(savedOrder);
+        console.log('📱 Push notification results:', {
+          totalDevices: pushResults.totalDevices,
+          successfulSends: pushResults.successfulSends,
+          failedSends: pushResults.failedSends,
+          errors: pushResults.errors
+        });
+
+      } catch (notificationError) {
+        console.error('❌ Notification error (non-blocking):', notificationError.message);
+      }
+    });
+
+    // Return success response
+    res.json({ 
+      success: true, 
+      order: {
+        id: savedOrder._id,
+        orderNumber: savedOrder.orderNumber,
+        status: savedOrder.status,
+        total: savedOrder.total,
+        estimatedDeliveryDate: savedOrder.estimatedDeliveryDate
+      },
+      message: `Order ${savedOrder.orderNumber} placed successfully! You will receive confirmation emails shortly.`
+    });
+
+  } catch (error) {
+    console.error('❌ Place order error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to place order", 
+      details: error.message 
+    });
+  }
 });
 
 // ===== Metrics (SSE) =====
@@ -1273,13 +1408,22 @@ app.get("/admin/orders", fetchuser, async (req, res) => {
 });
 
 app.post("/admin/updateorder", fetchuser, async (req, res) => {
-  const { orderId, status, financialsUpdate } = req.body;
+  const { orderId, status, financialsUpdate, note } = req.body;
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
-    const order = await Order.findById(orderId).session(session);
-    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    // Use DetailedOrder model instead of basic Order
+    let order = await DetailedOrder.findById(orderId).session(session);
+    if (!order) {
+      // Fallback to basic Order model for backwards compatibility
+      order = await Order.findById(orderId).session(session);
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+    }
+    
     const prevStatus = order.status;
+    console.log(`📋 Updating order ${order.orderNumber || order._id}: ${prevStatus} → ${status}`);
 
     if (financialsUpdate && typeof financialsUpdate === 'object') {
       order.financials = { ...(order.financials || {}), ...financialsUpdate };
@@ -1324,12 +1468,279 @@ app.post("/admin/updateorder", fetchuser, async (req, res) => {
     const fresh = await getOrInitMetrics();
     broadcastMetrics(fresh);
 
-    res.json({ success: true });
+    // Send customer status update notification (async, non-blocking)
+    if (prevStatus !== status) {
+      setImmediate(async () => {
+        try {
+          console.log(`📧 Sending status update notification for order ${order.orderNumber || order._id}`);
+          const notificationResult = await orderNotificationService.sendOrderStatusUpdate(
+            order,
+            prevStatus,
+            status,
+            note || ''
+          );
+          console.log(`📧 Status update notification result:`, {
+            success: notificationResult.success,
+            error: notificationResult.error
+          });
+        } catch (emailError) {
+          console.error('❌ Status update email error (non-blocking):', emailError.message);
+        }
+      });
+    }
+
+    res.json({ 
+      success: true,
+      message: `Order ${order.orderNumber || order._id} status updated to ${status}`,
+      order: {
+        id: order._id,
+        orderNumber: order.orderNumber,
+        status: order.status,
+        prevStatus: prevStatus
+      }
+    });
   } catch (e) {
     await session.abortTransaction();
     session.endSession();
     console.error('updateorder metrics error', e);
-    res.status(500).json({ success: false, message: 'Update failed' });
+    res.status(500).json({ success: false, message: 'Update failed', error: e.message });
+  }
+});
+
+// Email notification endpoints
+app.get('/api/admin/email/status', requireAdminAuth, async (req, res) => {
+  try {
+    const status = orderNotificationService.getStatus();
+    res.json({ 
+      success: true, 
+      emailService: status,
+      timestamp: new Date().toISOString() 
+    });
+  } catch (error) {
+    console.error('Email status check error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to check email service status',
+      details: error.message 
+    });
+  }
+});
+
+app.post('/api/admin/email/test', requireAdminAuth, async (req, res) => {
+  try {
+    console.log('🧪 Admin requested email test');
+    const testResults = await orderNotificationService.testEmailConfiguration();
+    
+    res.json({ 
+      success: true, 
+      testResults,
+      message: 'Email configuration test completed. Check your admin email for test message.',
+      timestamp: new Date().toISOString() 
+    });
+  } catch (error) {
+    console.error('Email test error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Email configuration test failed',
+      details: error.message 
+    });
+  }
+});
+
+// Manual email notification trigger for testing
+app.post('/api/admin/email/send-test-notification', requireAdminAuth, async (req, res) => {
+  try {
+    const { orderId, type = 'admin' } = req.body;
+    
+    if (!orderId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Order ID is required' 
+      });
+    }
+    
+    // Find the order
+    let order = await DetailedOrder.findById(orderId);
+    if (!order) {
+      order = await Order.findById(orderId);
+      if (!order) {
+        return res.status(404).json({ 
+          success: false, 
+          error: 'Order not found' 
+        });
+      }
+    }
+    
+    let result;
+    if (type === 'admin') {
+      result = await orderNotificationService.sendAdminNewOrderNotification(order);
+    } else if (type === 'customer') {
+      result = await orderNotificationService.sendCustomerOrderConfirmation(order);
+    } else {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid notification type. Use "admin" or "customer"' 
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      emailResult: result,
+      message: `Test ${type} notification sent for order ${order.orderNumber || order._id}`,
+      timestamp: new Date().toISOString() 
+    });
+    
+  } catch (error) {
+    console.error('Manual email notification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to send test notification',
+      details: error.message 
+    });
+  }
+});
+
+// Push notification endpoints
+app.post('/api/admin/fcm/register-device', requireAdminAuth, async (req, res) => {
+  try {
+    const { fcmToken, deviceType, userAgent, timestamp } = req.body;
+    
+    if (!fcmToken) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'FCM token is required' 
+      });
+    }
+
+    // Get admin ID from the authenticated request
+    const adminId = req.admin?.id || req.admin?._id || 'unknown';
+    
+    console.log(`📱 Registering FCM device for admin ${adminId}`);
+    
+    const result = await pushNotificationService.registerDevice(adminId, {
+      fcmToken,
+      deviceType,
+      userAgent,
+      timestamp
+    });
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        deviceId: result.deviceId
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ FCM device registration error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to register device',
+      details: error.message
+    });
+  }
+});
+
+app.get('/api/admin/fcm/devices', requireAdminAuth, async (req, res) => {
+  try {
+    const devices = pushNotificationService.getRegisteredDevices();
+    const status = pushNotificationService.getStatus();
+    
+    res.json({
+      success: true,
+      devices,
+      status,
+      totalDevices: devices.length
+    });
+  } catch (error) {
+    console.error('❌ FCM devices fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch devices',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/admin/fcm/test-notification', requireAdminAuth, async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+    
+    if (!fcmToken) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'FCM token is required for test' 
+      });
+    }
+    
+    console.log(`🧪 Sending test notification to device: ${fcmToken.substring(0, 20)}...`);
+    
+    const result = await pushNotificationService.sendTestNotification(fcmToken);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Test notification sent successfully',
+        messageId: result.messageId
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ FCM test notification error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send test notification',
+      details: error.message
+    });
+  }
+});
+
+app.post('/api/admin/fcm/cleanup', requireAdminAuth, async (req, res) => {
+  try {
+    const removedCount = pushNotificationService.cleanupExpiredTokens();
+    
+    res.json({
+      success: true,
+      message: `Cleaned up ${removedCount} expired device tokens`,
+      removedCount
+    });
+  } catch (error) {
+    console.error('❌ FCM cleanup error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cleanup tokens',
+      details: error.message
+    });
+  }
+});
+
+app.get('/api/admin/fcm/status', requireAdminAuth, async (req, res) => {
+  try {
+    const status = pushNotificationService.getStatus();
+    
+    res.json({
+      success: true,
+      pushNotificationService: status,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ FCM status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get push notification status',
+      details: error.message
+    });
   }
 });
 
