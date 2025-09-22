@@ -1193,6 +1193,7 @@ app.post("/removeproduct", async (req, res) => {
 const DetailedOrder = require('./models/Order');
 const orderNotificationService = require('./services/orderNotificationService');
 const pushNotificationService = require('./services/pushNotificationService');
+const webPushService = require('./services/webPushService');
 
 // ✅ Place Order (Enhanced with detailed model and email notifications)
 app.post("/placeorder", async (req, res) => {
@@ -1311,12 +1312,14 @@ app.post("/placeorder", async (req, res) => {
 
         console.log('📱 Triggering push notifications...');
         const pushResults = await pushNotificationService.sendOrderNotification(savedOrder);
+        const webPushResults = await webPushService.sendOrderNotification(savedOrder).catch(() => ({ success: false, total: 0 }));
         console.log('📱 Push notification results:', {
           totalDevices: pushResults.totalDevices,
           successfulSends: pushResults.successfulSends,
           failedSends: pushResults.failedSends,
           errors: pushResults.errors
         });
+        console.log('📱 Web Push results:', webPushResults);
 
       } catch (notificationError) {
         console.error('❌ Notification error (non-blocking):', notificationError.message);
@@ -1601,6 +1604,38 @@ app.post('/api/admin/email/send-test-notification', requireAdminAuth, async (req
 });
 
 // Push notification endpoints
+// Web Push (VAPID) endpoints for iOS Safari and fallback
+app.post('/api/admin/webpush/subscribe', requireAdminAuth, async (req, res) => {
+  try {
+    const adminId = req.admin?.id || req.admin?._id || 'unknown';
+    const { subscription, deviceType, userAgent } = req.body || {};
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ success: false, error: 'Invalid subscription' });
+    }
+    const result = await webPushService.subscribe(adminId, subscription, { deviceType, userAgent });
+    res.json({ success: true, id: result.id });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/admin/webpush/status', requireAdminAuth, async (req, res) => {
+  try {
+    const subs = await webPushService.listSubscriptions(req.admin?.id || null);
+    res.json({ success: true, total: subs.length, subscriptions: subs.map(s => ({ endpoint: s.endpoint, createdAt: s.createdAt })) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/api/admin/webpush/test', requireAdminAuth, async (req, res) => {
+  try {
+    const result = await webPushService.sendTest(req.admin?.id || null);
+    res.json({ success: result.success, total: result.total, successful: result.successful });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 app.post('/api/admin/fcm/register-device', requireAdminAuth, async (req, res) => {
   try {
     const { fcmToken, deviceType, userAgent, timestamp } = req.body;
