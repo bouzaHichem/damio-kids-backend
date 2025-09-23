@@ -1206,6 +1206,15 @@ app.post("/placeorder", async (req, res) => {
       itemCount: req.body.items?.length || 0,
       total: req.body.total
     });
+    // Debug logging (safe)
+    console.log('📝 Request headers (subset):', {
+      'content-type': req.headers['content-type'],
+      origin: req.headers['origin'],
+      'user-agent': req.headers['user-agent']
+    });
+    try {
+      console.log('📝 Incoming body:', JSON.stringify(req.body));
+    } catch (_) {}
 
     // Backward-compatibility shim: accept legacy payloads from the old storefront
     // and transform into the new schema (customerInfo + shippingAddress).
@@ -1383,7 +1392,7 @@ app.post("/placeorder", async (req, res) => {
     });
 
     // Return success response
-    res.json({ 
+    res.status(201).json({ 
       success: true, 
       order: {
         id: savedOrder._id,
