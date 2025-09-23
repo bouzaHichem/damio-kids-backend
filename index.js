@@ -1198,6 +1198,11 @@ try {
   console.warn('🟡 Web Push startup configure error:', e.message);
 }
 
+// Provide a helpful response for accidental GETs
+app.get('/placeorder', (req, res) => {
+  res.status(405).json({ success: false, error: 'Method Not Allowed. Use POST /placeorder.' });
+});
+
 // ✅ Place Order (Enhanced with detailed model and email notifications)
 app.post("/placeorder", async (req, res) => {
   try {
