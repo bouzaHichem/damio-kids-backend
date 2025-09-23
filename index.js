@@ -1226,7 +1226,8 @@ app.post("/placeorder", async (req, res) => {
           .trim();
 
         body.customerInfo = {
-          email: body.email || `guest+${Date.now()}@damio-kids.local`,
+          // Use a safe domain and simple format to satisfy email schema
+          email: body.email || `guest.${Date.now()}@damiokids.com`,
           name: fullName,
           phone: phone || '0000000000' // minimal placeholder that passes length checks
         };
@@ -1242,6 +1243,12 @@ app.post("/placeorder", async (req, res) => {
         // Compute subtotal if not provided
         if (body.subtotal == null && Array.isArray(body.items)) {
           body.subtotal = body.items.reduce((sum, it) => sum + Number(it.subtotal || (it.price || 0) * (it.quantity || 0)), 0);
+        }
+        // Compute total if missing or invalid
+        const df = Number(body.deliveryFee || 0);
+        const st = Number(body.subtotal || 0);
+        if (body.total == null || Number(body.total) <= 0) {
+          body.total = st + df;
         }
       } catch (e) {
         console.warn('⚠️ Legacy payload transform failed:', e.message);
@@ -1291,6 +1298,11 @@ app.post("/placeorder", async (req, res) => {
     }
 
     // Create order with detailed model
+    // Compute safe numeric values
+    const safeSubtotal = Number(subtotal || items.reduce((sum, item) => sum + (item.subtotal || item.price * item.quantity), 0));
+    const safeDelivery = Number(deliveryFee || 0);
+    const safeTotal = Number(total);
+
     const orderData = {
       userId: userId || "guest",
       customerInfo: {
@@ -1308,9 +1320,9 @@ app.post("/placeorder", async (req, res) => {
         color: item.color || '',
         subtotal: Number(item.subtotal || item.price * item.quantity)
       })),
-      subtotal: Number(subtotal || items.reduce((sum, item) => sum + (item.subtotal || item.price * item.quantity), 0)),
-      deliveryFee: Number(deliveryFee),
-      total: Number(total),
+      subtotal: safeSubtotal,
+      deliveryFee: safeDelivery,
+      total: isNaN(safeTotal) || safeTotal <= 0 ? (safeSubtotal + safeDelivery) : safeTotal,
       shippingAddress: {
         fullName: String(shippingAddress.fullName || '').trim(),
         phone: String(shippingAddress.phone || '').trim(),
