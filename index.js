@@ -1653,7 +1653,8 @@ app.post('/api/admin/webpush/test', requireAdminAuth, async (req, res) => {
 app.get('/api/admin/webpush/config', requireAdminAuth, async (req, res) => {
   try {
     const status = webPushService.getStatus();
-    res.json({ success: true, status });
+    // Expose the public VAPID key to authenticated admins so clients can subscribe
+    res.json({ success: true, status, publicKey: process.env.WEBPUSH_VAPID_PUBLIC_KEY || null });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
