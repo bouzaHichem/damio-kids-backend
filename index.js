@@ -1207,6 +1207,47 @@ app.post("/placeorder", async (req, res) => {
       total: req.body.total
     });
 
+    // Backward-compatibility shim: accept legacy payloads from the old storefront
+    // and transform into the new schema (customerInfo + shippingAddress).
+    (function legacyCompatTransform(body){
+      const hasNewShape = body && body.customerInfo && body.shippingAddress;
+      if (hasNewShape) return; // nothing to do
+      try {
+        const addressStr = String(body.address || '');
+        // Extract full name (before first comma) and phone (after 'Tel:') when present
+        const fullName = (addressStr.split(',')[0] || '').trim() || 'Customer';
+        const phoneMatch = addressStr.match(/Tel:\s*([+0-9\-\s()]{6,})/i);
+        const phone = (body.telephone || (phoneMatch ? phoneMatch[1] : '')).trim();
+        // Address line without the trailing Tel/Notes decorations
+        const cleanedAddress = addressStr
+          .replace(/Tel:\s*([+0-9\-\s()]{6,})/gi, '')
+          .replace(/Notes?:.*$/i, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+
+        body.customerInfo = {
+          email: body.email || `guest+${Date.now()}@damio-kids.local`,
+          name: fullName,
+          phone: phone || '0000000000' // minimal placeholder that passes length checks
+        };
+        body.shippingAddress = {
+          fullName,
+          phone: body.customerInfo.phone,
+          address: cleanedAddress || `${body.commune || ''}, ${body.wilaya || ''}`.trim(),
+          wilaya: body.wilaya || '',
+          commune: body.commune || ''
+        };
+        // Ensure delivery type
+        body.deliveryType = body.deliveryType || 'home';
+        // Compute subtotal if not provided
+        if (body.subtotal == null && Array.isArray(body.items)) {
+          body.subtotal = body.items.reduce((sum, it) => sum + Number(it.subtotal || (it.price || 0) * (it.quantity || 0)), 0);
+        }
+      } catch (e) {
+        console.warn('⚠️ Legacy payload transform failed:', e.message);
+      }
+    })(req.body || {});
+
     // Validate required fields
     const { 
       items, 
@@ -1253,9 +1294,9 @@ app.post("/placeorder", async (req, res) => {
     const orderData = {
       userId: userId || "guest",
       customerInfo: {
-        email: customerInfo.email.toLowerCase().trim(),
-        name: customerInfo.name.trim(),
-        phone: customerInfo.phone.trim()
+        email: String(customerInfo.email || '').toLowerCase().trim(),
+        name: String(customerInfo.name || '').trim(),
+        phone: String(customerInfo.phone || '').trim()
       },
       items: items.map(item => ({
         productId: item.productId || item.id,
@@ -1271,11 +1312,11 @@ app.post("/placeorder", async (req, res) => {
       deliveryFee: Number(deliveryFee),
       total: Number(total),
       shippingAddress: {
-        fullName: shippingAddress.fullName.trim(),
-        phone: shippingAddress.phone.trim(),
+        fullName: String(shippingAddress.fullName || '').trim(),
+        phone: String(shippingAddress.phone || '').trim(),
         wilaya: shippingAddress.wilaya,
         commune: shippingAddress.commune,
-        address: shippingAddress.address.trim(),
+        address: String(shippingAddress.address || '').trim(),
         postalCode: shippingAddress.postalCode || '',
         notes: shippingAddress.notes || ''
       },
