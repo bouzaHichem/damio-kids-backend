@@ -424,18 +424,9 @@ productSchemaLite.index({ date: -1 });
 
 const Product = mongoose.model('Product', productSchemaLite);
 
-const Order = mongoose.model("Order", {
-  userId: String,
-  items: Array,
-  total: Number,
-  deliveryFee: { type: Number, default: 0 },
-  address: String,
-  wilaya: String,
-  commune: String,
-  deliveryType: { type: String, enum: ['home', 'pickup'], default: 'home' },
-  status: { type: String, default: "Pending" },
-  date: { type: Date, default: Date.now }
-});
+// Use the canonical Order model definition to avoid Mongoose OverwriteModelError
+// This ensures the model is registered exactly once across the codebase.
+const Order = require('./models/Order');
 
 const DeliveryFee = mongoose.model("DeliveryFee", {
   wilaya: { type: String, required: true },
@@ -1190,7 +1181,7 @@ app.post("/removeproduct", async (req, res) => {
 });
 
 // Import Order model and notification services
-const DetailedOrder = require('./models/Order');
+const DetailedOrder = Order; // alias to the same canonical model
 const orderNotificationService = require('./services/orderNotificationService');
 const pushNotificationService = require('./services/pushNotificationService');
 const webPushService = require('./services/webPushService');
