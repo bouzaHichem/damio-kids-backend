@@ -1,10 +1,16 @@
 const mongoose = require('mongoose');
 
+const genOrderNumber = () => {
+  const timestamp = Date.now().toString();
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `DK${timestamp.slice(-6)}${random}`;
+};
+
 const orderItemSchema = new mongoose.Schema({
   productId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Product',
-    required: [true, 'Product ID is required']
+    // Accept either ObjectId, string, or number; legacy storefront used numeric IDs
+    type: mongoose.Schema.Types.Mixed,
+    default: null
   },
   name: {
     type: String,
@@ -90,7 +96,9 @@ const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
     unique: true,
-    required: true
+    required: true,
+    // Generate orderNumber before validation
+    default: genOrderNumber
   },
   userId: {
     type: String, // Can be ObjectId for registered users or "guest" for guest orders
@@ -289,27 +297,26 @@ orderSchema.virtual('canReturn').get(function() {
   return daysSinceDelivery <= 30; // 30 days return policy
 });
 
-// Pre-save middleware
-orderSchema.pre('save', function(next) {
-  // Generate order number if not provided
-  if (!this.orderNumber) {
-    const timestamp = Date.now().toString();
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    this.orderNumber = `DK${timestamp.slice(-6)}${random}`;
-  }
-  
+// Ensure orderNumber exists before validation
+orderSchema.pre('validate', function(next) {
+  if (!this.orderNumber) this.orderNumber = genOrderNumber();
+
   // Validate total calculation
-  const calculatedTotal = this.subtotal + this.deliveryFee;
-  if (Math.abs(this.total - calculatedTotal) > 0.01) {
+  const calculatedTotal = Number(this.subtotal || 0) + Number(this.deliveryFee || 0);
+  if (Math.abs(Number(this.total || 0) - calculatedTotal) > 0.01) {
     return next(new Error('Total amount does not match subtotal + delivery fee'));
   }
-  
+
   // Validate items subtotal
-  const itemsSubtotal = this.items.reduce((sum, item) => sum + item.subtotal, 0);
-  if (Math.abs(this.subtotal - itemsSubtotal) > 0.01) {
+  const itemsSubtotal = (this.items || []).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  if (Math.abs(Number(this.subtotal || 0) - itemsSubtotal) > 0.01) {
     return next(new Error('Subtotal does not match items subtotal'));
   }
-  
+  next();
+});
+
+// Pre-save middleware for status/estimated delivery
+orderSchema.pre('save', function(next) {
   // Add status to history if status changed
   if (this.isModified('status')) {
     this.statusHistory.push({
@@ -318,13 +325,12 @@ orderSchema.pre('save', function(next) {
       updatedBy: 'system'
     });
   }
-  
+
   // Set estimated delivery date for new orders
   if (this.isNew && this.deliveryType === 'home') {
-    const deliveryDays = this.shippingAddress.wilaya === 'Alger' ? 2 : 5;
+    const deliveryDays = this.shippingAddress?.wilaya === 'Alger' ? 2 : 5;
     this.estimatedDeliveryDate = new Date(Date.now() + deliveryDays * 24 * 60 * 60 * 1000);
   }
-  
   next();
 });
 
