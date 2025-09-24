@@ -5,11 +5,13 @@
 
 const admin = require('firebase-admin');
 const path = require('path');
+const AdminFCMDevice = require('../models/AdminFCMDevice');
 
 class PushNotificationService {
   constructor() {
     this.initialized = false;
-    this.registeredDevices = new Map(); // Store FCM tokens
+    this.registeredDevices = new Map(); // Store FCM tokens in-memory cache
+    this.loadedFromDB = false;
     this.initializeFirebaseAdmin();
   }
 
@@ -48,10 +50,29 @@ class PushNotificationService {
 
       this.initialized = true;
       console.log('🚀 Push notification service initialized');
+      // Best-effort load cached devices from DB
+      setImmediate(() => this.loadDevicesFromDB().catch(() => {}));
 
     } catch (error) {
       console.error('❌ Failed to initialize Firebase Admin:', error.message);
       this.initialized = false;
+    }
+  }
+
+  /**
+   * Ensure in-memory cache is loaded from DB once
+   */
+  async loadDevicesFromDB() {
+    if (this.loadedFromDB) return;
+    try {
+      const docs = await AdminFCMDevice.find({ isActive: true }).lean();
+      for (const d of docs) {
+        this.registeredDevices.set(d.fcmToken, d);
+      }
+      this.loadedFromDB = true;
+      console.log(`📦 Loaded ${docs.length} FCM devices from DB`);
+    } catch (e) {
+      console.warn('⚠️ Failed to load FCM devices from DB:', e.message);
     }
   }
 
@@ -66,6 +87,8 @@ class PushNotificationService {
         return { success: false, error: 'FCM token is required' };
       }
 
+      await this.loadDevicesFromDB();
+
       // Store device registration
       const deviceInfo = {
         adminId,
@@ -77,6 +100,14 @@ class PushNotificationService {
         isActive: true
       };
 
+      // Upsert DB
+      await AdminFCMDevice.findOneAndUpdate(
+        { fcmToken },
+        { $set: deviceInfo },
+        { upsert: true, new: true }
+      );
+
+      // Update in-memory cache
       this.registeredDevices.set(fcmToken, deviceInfo);
       
       console.log(`📱 Device registered for admin ${adminId}:`, {
@@ -120,6 +151,7 @@ class PushNotificationService {
    * Send push notification to all registered admin devices
    */
   async sendOrderNotification(order) {
+    await this.loadDevicesFromDB();
     if (!this.initialized || this.registeredDevices.size === 0) {
       console.warn('⚠️ No devices registered or push service not initialized');
       return { success: false, error: 'No devices registered' };
@@ -383,24 +415,27 @@ class PushNotificationService {
   /**
    * Get registered devices info
    */
-  getRegisteredDevices() {
-    return Array.from(this.registeredDevices.values()).map(device => ({
+  async getRegisteredDevices() {
+    await this.loadDevicesFromDB();
+    const docs = await AdminFCMDevice.find({}).lean();
+    return docs.map(device => ({
       adminId: device.adminId,
       deviceType: device.deviceType,
       userAgent: device.userAgent,
       registeredAt: device.registeredAt,
       lastUsed: device.lastUsed,
       isActive: device.isActive,
-      tokenPreview: device.fcmToken.substring(0, 20) + '...'
+      tokenPreview: device.fcmToken ? device.fcmToken.substring(0, 20) + '...' : null
     }));
   }
 
   /**
    * Remove device token
    */
-  removeDevice(token) {
+  async removeDevice(token) {
     const removed = this.registeredDevices.delete(token);
     if (removed) {
+      await AdminFCMDevice.deleteOne({ fcmToken: token }).catch(()=>{});
       console.log(`🗑️ Device token removed: ${token.substring(0, 20)}...`);
     }
     return removed;
@@ -409,7 +444,7 @@ class PushNotificationService {
   /**
    * Clean up expired tokens
    */
-  cleanupExpiredTokens() {
+  async cleanupExpiredTokens() {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
     
@@ -417,6 +452,7 @@ class PushNotificationService {
     for (const [token, device] of this.registeredDevices) {
       if (device.lastUsed < thirtyDaysAgo) {
         this.registeredDevices.delete(token);
+        await AdminFCMDevice.deleteOne({ fcmToken: token }).catch(()=>{});
         removed++;
       }
     }

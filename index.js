@@ -1765,7 +1765,7 @@ app.post('/api/admin/fcm/register-device', requireAdminAuth, async (req, res) =>
 
 app.get('/api/admin/fcm/devices', requireAdminAuth, async (req, res) => {
   try {
-    const devices = pushNotificationService.getRegisteredDevices();
+    const devices = await pushNotificationService.getRegisteredDevices();
     const status = pushNotificationService.getStatus();
     
     res.json({
