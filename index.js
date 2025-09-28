@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require("express");
 const app = express();
+// Trust first proxy (Render/Cloudflare) so express-rate-limit can read client IP from X-Forwarded-For
+app.set('trust proxy', 1);
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
