@@ -577,6 +577,15 @@ try {
 // Routes
 app.get("/", (req, res) => res.send("Damio Kids API - Server is running!"));
 
+// Public contact endpoint (for storefront Contact form)
+try {
+  const contactRoutes = require('./routes/contact');
+  app.use(contactRoutes);
+  console.log('✅ Contact route mounted at POST /api/contact');
+} catch (e) {
+  console.error('❌ Failed to load contact route:', e.message);
+}
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ 

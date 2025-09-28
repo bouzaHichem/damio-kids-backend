@@ -4,6 +4,8 @@ const { ValidationError } = require('../middleware/errorHandler');
 class EmailService {
   constructor() {
     this.transporter = null;
+    this.initialized = false;
+    this.service = 'unconfigured';
     this.initializeTransporter();
   }
   
@@ -11,41 +13,70 @@ class EmailService {
    * Initialize email transporter based on environment
    */
   initializeTransporter() {
-    // Check if email service is configured
-    if (!process.env.EMAIL_SERVICE && !process.env.SMTP_HOST) {
-      console.warn('Email service not configured. Email notifications will be disabled.');
-      return;
-    }
-    
+    // Prefer unified EMAIL_* vars; fallback to SMTP_*; support gmail/sendgrid shortcuts
     try {
-      if (process.env.EMAIL_SERVICE === 'gmail') {
-        // Gmail service configuration
-        this.transporter = nodemailer.createTransporter({
-          service: 'gmail',
+      const emailService = (process.env.EMAIL_SERVICE || process.env.SMTP_SERVICE || '').toLowerCase();
+
+      // SendGrid via SMTP (no extra dependency required)
+      if (emailService === 'sendgrid' || process.env.SENDGRID_API_KEY) {
+        this.transporter = nodemailer.createTransport({
+          host: process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.sendgrid.net',
+          port: parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10),
+          secure: (process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true',
           auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_APP_PASSWORD // Use App Password for Gmail
+            user: process.env.SENDGRID_USER || 'apikey',
+            pass: process.env.SENDGRID_API_KEY
           }
         });
-      } else if (process.env.SMTP_HOST) {
-        // Custom SMTP configuration
-        this.transporter = nodemailer.createTransporter({
-          host: process.env.SMTP_HOST,
-          port: parseInt(process.env.SMTP_PORT) || 587,
-          secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-          }
-        });
-      } else {
-        // Development mode - use Ethereal Email (fake SMTP service)
-        this.setupEtherealEmail();
+        this.service = 'sendgrid';
       }
-      
-      console.log('Email service initialized successfully');
+      // Gmail (App Password required)
+      else if (
+        emailService === 'gmail' ||
+        (process.env.EMAIL_HOST || '').includes('gmail') ||
+        (process.env.SMTP_HOST || '').includes('gmail') ||
+        (process.env.EMAIL_USER || '').includes('@gmail.com')
+      ) {
+        const user = process.env.EMAIL_USER || process.env.SMTP_USER;
+        const pass = process.env.EMAIL_PASS || process.env.EMAIL_APP_PASSWORD || process.env.SMTP_PASS;
+        if (!user || !pass) throw new Error('Gmail requires EMAIL_USER and EMAIL_PASS (App Password)');
+        this.transporter = nodemailer.createTransport({
+          host: process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10),
+          secure: (process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true',
+          auth: { user, pass }
+        });
+        this.service = 'gmail';
+      }
+      // Custom SMTP
+      else if (process.env.EMAIL_HOST || process.env.SMTP_HOST) {
+        const host = process.env.EMAIL_HOST || process.env.SMTP_HOST;
+        const port = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10);
+        const secure = (process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true' || port === 465;
+        const user = process.env.EMAIL_USER || process.env.SMTP_USER;
+        const pass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
+        if (!user || !pass) throw new Error('SMTP requires username/password');
+        this.transporter = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+        this.service = 'smtp';
+      }
+      // Development fallback - Ethereal
+      else if (process.env.NODE_ENV !== 'production') {
+        // Will set up asynchronously
+        this.setupEtherealEmail();
+        return;
+      } else {
+        console.warn('Email service not configured. Set EMAIL_HOST/USER/PASS or EMAIL_SERVICE.');
+        this.initialized = false;
+        this.service = 'unconfigured';
+        return;
+      }
+
+      this.initialized = true;
+      console.log(`Email service initialized: ${this.service}`);
     } catch (error) {
       console.error('Failed to initialize email service:', error.message);
+      this.initialized = false;
+      this.service = 'error';
     }
   }
   
@@ -56,7 +87,7 @@ class EmailService {
     try {
       const testAccount = await nodemailer.createTestAccount();
       
-      this.transporter = nodemailer.createTransporter({
+      this.transporter = nodemailer.createTransport({
         host: 'smtp.ethereal.email',
         port: 587,
         secure: false,
@@ -65,11 +96,15 @@ class EmailService {
           pass: testAccount.pass
         }
       });
+      this.initialized = true;
+      this.service = 'ethereal';
       
       console.log('Ethereal Email configured for development');
       console.log(`Test email credentials: ${testAccount.user} / ${testAccount.pass}`);
     } catch (error) {
       console.error('Failed to setup Ethereal Email:', error.message);
+      this.initialized = false;
+      this.service = 'error';
     }
   }
   
@@ -79,6 +114,10 @@ class EmailService {
    */
   async sendEmail(mailOptions) {
     if (!this.transporter) {
+      // Try lazy init once
+      this.initializeTransporter();
+    }
+    if (!this.transporter) {
       console.warn('Email service not available. Email not sent:', mailOptions.subject);
       return { success: false, reason: 'Email service not configured' };
     }
@@ -86,7 +125,7 @@ class EmailService {
     try {
       // Add default sender if not specified
       if (!mailOptions.from) {
-        mailOptions.from = process.env.EMAIL_FROM || process.env.EMAIL_USER || 'noreply@damiokids.com';
+        mailOptions.from = process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@damiokids.com';
       }
       
       const result = await this.transporter.sendMail(mailOptions);
@@ -98,8 +137,9 @@ class EmailService {
       });
       
       // Log preview URL for development
-      if (process.env.NODE_ENV === 'development' && result.messageId.includes('ethereal')) {
-        console.log('Preview URL:', nodemailer.getTestMessageUrl(result));
+      const preview = nodemailer.getTestMessageUrl(result);
+      if (preview) {
+        console.log('Preview URL:', preview);
       }
       
       return { success: true, messageId: result.messageId, result };
@@ -446,6 +486,34 @@ Thank you for choosing Damio Kids!
    */
   capitalizeFirst(str) {
     return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+  /**
+   * Verify connection to SMTP server
+   */
+  async verifyConnection() {
+    try {
+      if (!this.transporter) {
+        this.initializeTransporter();
+      }
+      if (!this.transporter) return false;
+      await this.transporter.verify();
+      return true;
+    } catch (e) {
+      console.warn('Email transporter verify failed:', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Expose status for diagnostics
+   */
+  getStatus() {
+    return {
+      initialized: !!this.transporter,
+      service: this.service,
+      adminEmail: process.env.ADMIN_EMAIL || process.env.CONTACT_TO || null,
+      fromEmail: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || null
+    };
   }
 }
 
