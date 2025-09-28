@@ -26,7 +26,11 @@ class EmailService {
           auth: {
             user: process.env.SENDGRID_USER || 'apikey',
             pass: process.env.SENDGRID_API_KEY
-          }
+          },
+          pool: false,
+          connectionTimeout: parseInt(process.env.EMAIL_CONNECTION_TIMEOUT || '8000', 10),
+          greetingTimeout: parseInt(process.env.EMAIL_GREETING_TIMEOUT || '8000', 10),
+          socketTimeout: parseInt(process.env.EMAIL_SOCKET_TIMEOUT || '12000', 10)
         });
         this.service = 'sendgrid';
       }
@@ -40,11 +44,16 @@ class EmailService {
         const user = process.env.EMAIL_USER || process.env.SMTP_USER;
         const pass = process.env.EMAIL_PASS || process.env.EMAIL_APP_PASSWORD || process.env.SMTP_PASS;
         if (!user || !pass) throw new Error('Gmail requires EMAIL_USER and EMAIL_PASS (App Password)');
+        const port = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10);
+        const secure = ((process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true') || port === 465;
         this.transporter = nodemailer.createTransport({
-          host: process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10),
-          secure: (process.env.EMAIL_SECURE || process.env.SMTP_SECURE) === 'true',
-          auth: { user, pass }
+          service: 'gmail',
+          auth: { user, pass },
+          secure,
+          pool: false,
+          connectionTimeout: parseInt(process.env.EMAIL_CONNECTION_TIMEOUT || '8000', 10),
+          greetingTimeout: parseInt(process.env.EMAIL_GREETING_TIMEOUT || '8000', 10),
+          socketTimeout: parseInt(process.env.EMAIL_SOCKET_TIMEOUT || '12000', 10)
         });
         this.service = 'gmail';
       }
@@ -56,7 +65,16 @@ class EmailService {
         const user = process.env.EMAIL_USER || process.env.SMTP_USER;
         const pass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
         if (!user || !pass) throw new Error('SMTP requires username/password');
-        this.transporter = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+        this.transporter = nodemailer.createTransport({
+          host,
+          port,
+          secure,
+          auth: { user, pass },
+          pool: false,
+          connectionTimeout: parseInt(process.env.EMAIL_CONNECTION_TIMEOUT || '8000', 10),
+          greetingTimeout: parseInt(process.env.EMAIL_GREETING_TIMEOUT || '8000', 10),
+          socketTimeout: parseInt(process.env.EMAIL_SOCKET_TIMEOUT || '12000', 10)
+        });
         this.service = 'smtp';
       }
       // Development fallback - Ethereal
