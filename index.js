@@ -36,7 +36,9 @@ const corsOptions = {
       process.env.ADMIN_URL,
       'https://damio-kids-frontend.vercel.app',
       'https://damio-kids-final-project.vercel.app',
-      'https://damio-kids-admin.vercel.app'
+      'https://damio-kids-admin.vercel.app',
+      'https://www.damiokids.com',
+      'https://damiokids.com'
     ].filter(Boolean);
 
     // Allow all Vercel preview URLs for your specific projects (admin/frontend)
