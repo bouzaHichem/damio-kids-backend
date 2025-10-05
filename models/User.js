@@ -27,9 +27,25 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+  // Legacy cart mapping (productId => quantity)
   cartData: {
     type: Object,
     default: {}
+  },
+  // New cart line items with variant support
+  cartLines: {
+    type: [
+      new mongoose.Schema({
+        id: { type: Number, required: true },
+        quantity: { type: Number, default: 1, min: 0 },
+        variant: {
+          size: { type: String, default: '' },
+          color: { type: String, default: '' },
+          age: { type: String, default: '' }
+        }
+      }, { _id: false })
+    ],
+    default: []
   },
   isActive: {
     type: Boolean,

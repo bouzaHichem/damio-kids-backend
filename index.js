@@ -1153,22 +1153,92 @@ app.post("/relatedproducts", async (req, res) => {
 
 // Cart (only for logged-in users)
 app.post('/addtocart', fetchuser, async (req, res) => {
-  const userData = await Users.findById(req.user.id);
-  userData.cartData[req.body.itemId] += 1;
-  await Users.findByIdAndUpdate(req.user.id, { cartData: userData.cartData });
-  res.send("Added");
+  try {
+    const { itemId, variant = null, quantity = 1 } = req.body || {};
+    if (!itemId) return res.status(400).json({ success: false, error: 'itemId is required' });
+    const qty = Math.max(1, Number(quantity) || 1);
+
+    const user = await Users.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // Ensure cartLines exists
+    user.cartLines = Array.isArray(user.cartLines) ? user.cartLines : [];
+
+    // Variant-aware merge key
+    const v = variant || {};
+    const match = (l) => l.id === Number(itemId) && String(l.variant?.size||'')===String(v.size||'') && String(l.variant?.color||'')===String(v.color||'') && String(l.variant?.age||'')===String(v.age||'');
+    const idx = user.cartLines.findIndex(match);
+    if (idx >= 0) {
+      user.cartLines[idx].quantity = Number(user.cartLines[idx].quantity || 0) + qty;
+    } else {
+      user.cartLines.push({ id: Number(itemId), quantity: qty, variant: { size: v.size || '', color: v.color || '', age: v.age || '' } });
+    }
+
+    // Keep legacy cartData roughly in sync (sum by product id)
+    user.cartData = user.cartLines.reduce((acc, line) => {
+      acc[line.id] = (acc[line.id] || 0) + Number(line.quantity || 0);
+      return acc;
+    }, {});
+
+    await user.save();
+    res.json({ success: true, cartLines: user.cartLines });
+  } catch (e) {
+    console.error('addtocart error:', e);
+    res.status(500).json({ success: false, error: 'Failed to add to cart' });
+  }
 });
 
 app.post('/removefromcart', fetchuser, async (req, res) => {
-  const userData = await Users.findById(req.user.id);
-  if (userData.cartData[req.body.itemId] > 0) userData.cartData[req.body.itemId] -= 1;
-  await Users.findByIdAndUpdate(req.user.id, { cartData: userData.cartData });
-  res.send("Removed");
+  try {
+    const { itemId, variant = null, quantity = 1 } = req.body || {};
+    if (!itemId) return res.status(400).json({ success: false, error: 'itemId is required' });
+    const qty = Math.max(1, Number(quantity) || 1);
+
+    const user = await Users.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+    user.cartLines = Array.isArray(user.cartLines) ? user.cartLines : [];
+
+    const v = variant || {};
+    const match = (l) => l.id === Number(itemId) && String(l.variant?.size||'')===String(v.size||'') && String(l.variant?.color||'')===String(v.color||'') && String(l.variant?.age||'')===String(v.age||'');
+    const idx = user.cartLines.findIndex(match);
+    if (idx >= 0) {
+      const nextQty = Math.max(0, Number(user.cartLines[idx].quantity || 0) - qty);
+      if (nextQty === 0) {
+        user.cartLines.splice(idx, 1);
+      } else {
+        user.cartLines[idx].quantity = nextQty;
+      }
+    }
+
+    user.cartData = user.cartLines.reduce((acc, line) => {
+      acc[line.id] = (acc[line.id] || 0) + Number(line.quantity || 0);
+      return acc;
+    }, {});
+
+    await user.save();
+    res.json({ success: true, cartLines: user.cartLines });
+  } catch (e) {
+    console.error('removefromcart error:', e);
+    res.status(500).json({ success: false, error: 'Failed to remove from cart' });
+  }
 });
 
 app.post('/getcart', fetchuser, async (req, res) => {
-  const userData = await Users.findById(req.user.id);
-  res.json(userData.cartData);
+  try {
+    const user = await Users.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    // Prefer new cartLines; fall back to legacy mapping
+    if (Array.isArray(user.cartLines) && user.cartLines.length) {
+      return res.json(user.cartLines);
+    }
+    const mapping = user.cartData || {};
+    const lines = Object.keys(mapping).map(pid => ({ id: Number(pid), quantity: Number(mapping[pid] || 0), variant: null })).filter(l => l.quantity>0);
+    return res.json(lines);
+  } catch (e) {
+    console.error('getcart error:', e);
+    res.status(500).json({ success: false, error: 'Failed to fetch cart' });
+  }
 });
 
 // Add/remove products
@@ -1343,8 +1413,8 @@ app.post("/placeorder", async (req, res) => {
         image: item.image,
         price: Number(item.price),
         quantity: Number(item.quantity),
-        size: item.size || '',
-        color: item.color || '',
+        size: (item.size || item.variant?.size || ''),
+        color: (item.color || item.variant?.color || ''),
         subtotal: Number(item.subtotal || item.price * item.quantity)
       })),
       subtotal: safeSubtotal,
