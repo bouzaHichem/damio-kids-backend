@@ -1365,6 +1365,22 @@ app.post("/placeorder", async (req, res) => {
       userId 
     } = req.body;
 
+    // Normalize phone numbers (handle Arabic-Indic digits and strip spaces)
+    const normalizePhone = (p) => {
+      try {
+        let s = String(p || '').trim();
+        // Convert Arabic-Indic 0-9
+        s = s.replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+        // Convert Extended Arabic-Indic 0-9
+        s = s.replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+        // Keep leading + then digits only
+        const leadPlus = s.startsWith('+');
+        s = s.replace(/[^0-9]/g, '');
+        if (leadPlus) s = '+' + s;
+        return s;
+      } catch { return String(p || ''); }
+    };
+
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ 
         success: false, 
@@ -1405,7 +1421,7 @@ app.post("/placeorder", async (req, res) => {
       customerInfo: {
         email: String(customerInfo.email || '').toLowerCase().trim(),
         name: String(customerInfo.name || '').trim(),
-        phone: String(customerInfo.phone || '').trim()
+        phone: normalizePhone(customerInfo.phone)
       },
       items: items.map(item => ({
         productId: item.productId || item.id,
@@ -1422,7 +1438,7 @@ app.post("/placeorder", async (req, res) => {
       total: isNaN(safeTotal) || safeTotal <= 0 ? (safeSubtotal + safeDelivery) : safeTotal,
       shippingAddress: {
         fullName: String(shippingAddress.fullName || '').trim(),
-        phone: String(shippingAddress.phone || '').trim(),
+        phone: normalizePhone(shippingAddress.phone),
         wilaya: shippingAddress.wilaya,
         commune: shippingAddress.commune,
         address: String(shippingAddress.address || '').trim(),
