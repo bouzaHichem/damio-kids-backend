@@ -1268,6 +1268,7 @@ const DetailedOrder = Order; // alias to the same canonical model
 const orderNotificationService = require('./services/orderNotificationService');
 const pushNotificationService = require('./services/pushNotificationService');
 const webPushService = require('./services/webPushService');
+const facebookController = require('./controllers/facebookController');
 // Initialize Web Push on startup (logs whether keys are present)
 try {
   webPushService.configure();
@@ -1490,6 +1491,30 @@ app.post("/placeorder", async (req, res) => {
         });
         console.log('📱 Web Push results:', webPushResults);
 
+        // Send Facebook Conversions API Purchase event
+        console.log('📊 Triggering Facebook CAPI Purchase event...');
+        const facebookResults = await facebookController.sendPurchaseEvent(
+          {
+            orderId: savedOrder.orderNumber,
+            order_id: savedOrder.orderNumber,
+            items: savedOrder.items,
+            total: savedOrder.total,
+            total_amount: savedOrder.total,
+            delivery_method: savedOrder.deliveryType
+          },
+          req, // Express request object for IP/User-Agent
+          {
+            email: savedOrder.customerInfo.email,
+            phone: savedOrder.customerInfo.phone,
+            firstName: savedOrder.customerInfo.name?.split(' ')[0],
+            lastName: savedOrder.customerInfo.name?.split(' ').slice(1).join(' '),
+            city: savedOrder.shippingAddress.commune,
+            state: savedOrder.shippingAddress.wilaya,
+            country: 'Algeria'
+          }
+        );
+        console.log('📊 Facebook CAPI Purchase results:', facebookResults);
+
       } catch (notificationError) {
         console.error('❌ Notification error (non-blocking):', notificationError.message);
       }
@@ -1514,6 +1539,24 @@ app.post("/placeorder", async (req, res) => {
       success: false, 
       error: "Failed to place order", 
       details: error.message 
+    });
+  });
+});
+
+// ===== Facebook Conversions API Test Route =====
+app.get('/api/facebook/test', async (req, res) => {
+  try {
+    const testResult = await facebookController.testConnection();
+    res.json({
+      success: testResult.success,
+      message: testResult.success ? 'Facebook Conversions API is configured correctly' : 'Facebook Conversions API configuration issue',
+      data: testResult
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to test Facebook Conversions API',
+      details: error.message
     });
   }
 });
